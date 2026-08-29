@@ -6,6 +6,7 @@ namespace App\Controllers;
 
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\SchoolImportService;
 use App\Services\SchoolService;
 
 class SchoolController
@@ -55,6 +56,19 @@ class SchoolController
         Response::json($result);
     }
 
+    public function delete(): void
+    {
+        $id = (int)Request::param('id', 0);
+        $result = (new SchoolService())->delete($id);
+
+        if (isset($result['error'])) {
+            $status = $result['error'] === 'School not found' ? 404 : 422;
+            Response::json(['message' => $result['error']], $status);
+        }
+
+        Response::json($result);
+    }
+
     public function createAdmin(): void
     {
         $id = (int)Request::param('id', 0);
@@ -63,6 +77,24 @@ class SchoolController
         if (isset($result['error'])) {
             $status = $result['error'] === 'School not found' ? 404 : 422;
             Response::json(['message' => $result['error']], $status);
+        }
+
+        Response::json($result, 201);
+    }
+
+    public function importData(): void
+    {
+        $id = (int)Request::param('id', 0);
+        if (!isset($_FILES['school_data'])) {
+            Response::json(['message' => 'Le fichier de données école est obligatoire.'], 422);
+        }
+
+        $result = (new SchoolImportService())->import($id, $_FILES['school_data']);
+        if (isset($result['error'])) {
+            Response::json([
+                'message' => $result['error'],
+                'details' => $result['details'] ?? [],
+            ], 422);
         }
 
         Response::json($result, 201);

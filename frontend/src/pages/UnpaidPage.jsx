@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { SCHOOL_YEAR_MONTH_OPTIONS } from "../config/schoolOptions";
 import { getUnpaidMonthlyFees } from "../services/monthlyFeeService";
 
 const formatMoney = (value) =>
@@ -15,18 +16,52 @@ const statusLabel = (value) => {
 
 export default function UnpaidPage() {
   const [items, setItems] = useState([]);
+  const [filters, setFilters] = useState({
+    search: "",
+    class_level: "",
+    class_name: "",
+    month_label: "",
+    year_value: "",
+  });
+  const [filtersApplied, setFiltersApplied] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    getUnpaidMonthlyFees()
-      .then((data) => setItems(Array.isArray(data) ? data : []))
-      .catch(() => setError("Impossible de charger les impayes."));
-  }, []);
 
   const totalRemaining = useMemo(
     () => items.reduce((sum, item) => sum + Number(item.remaining_amount || 0), 0),
     [items]
   );
+
+  const applyFilters = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const data = await getUnpaidMonthlyFees({
+        search: filters.search || undefined,
+        class_level: filters.class_level || undefined,
+        class_name: filters.class_name || undefined,
+        month_label: filters.month_label || undefined,
+        year_value: filters.year_value || undefined,
+      });
+      setItems(Array.isArray(data) ? data : []);
+      setFiltersApplied(true);
+    } catch (err) {
+      setItems([]);
+      setFiltersApplied(false);
+      setError(err?.response?.data?.message || "Impossible de charger les impayes.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetFilters = () => {
+    setFilters({ search: "", class_level: "", class_name: "", month_label: "", year_value: "" });
+    setItems([]);
+    setFiltersApplied(false);
+    setError("");
+  };
 
   return (
     <div className="admin-grid">
@@ -45,11 +80,51 @@ export default function UnpaidPage() {
 
       <section className="panel">
         {error && <p className="error-text">{error}</p>}
+        <form className="filters-grid" onSubmit={applyFilters}>
+          <input
+            placeholder="Rechercher un eleve"
+            value={filters.search}
+            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+          />
+          <input
+            placeholder="Filtrer par niveau"
+            value={filters.class_level}
+            onChange={(e) => setFilters({ ...filters, class_level: e.target.value })}
+          />
+          <input
+            placeholder="Filtrer par classe/groupe"
+            value={filters.class_name}
+            onChange={(e) => setFilters({ ...filters, class_name: e.target.value })}
+          />
+          <select
+            value={filters.month_label}
+            onChange={(e) => setFilters({ ...filters, month_label: e.target.value })}
+          >
+            <option value="">Tous les mois</option>
+            {SCHOOL_YEAR_MONTH_OPTIONS.map((month) => (
+              <option key={month.value} value={month.value}>{month.label}</option>
+            ))}
+          </select>
+          <input
+            type="number"
+            placeholder="Annee"
+            value={filters.year_value}
+            onChange={(e) => setFilters({ ...filters, year_value: e.target.value })}
+          />
+          <button type="button" className="secondary-btn" onClick={resetFilters}>
+            Réinitialiser
+          </button>
+          <button type="submit" disabled={loading}>
+            {loading ? "Chargement..." : "Appliquer"}
+          </button>
+        </form>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Eleve</th>
+                <th>Niveau</th>
+                <th>Classe</th>
                 <th>Parent</th>
                 <th>Telephone</th>
                 <th>Mois</th>
@@ -66,6 +141,8 @@ export default function UnpaidPage() {
                   <td>
                     {item.first_name} {item.last_name}
                   </td>
+                  <td>{item.class_level_name || "-"}</td>
+                  <td>{item.class_group_name || "-"}</td>
                   <td>{item.parent_name}</td>
                   <td>{item.phone || "-"}</td>
                   <td>{item.month_label}</td>
@@ -78,8 +155,8 @@ export default function UnpaidPage() {
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan="9" className="table-empty">
-                    Aucun impaye trouve.
+                  <td colSpan="11" className="table-empty">
+                    {filtersApplied ? "Aucun impaye trouve." : "Appliquez un filtre pour afficher les impayes."}
                   </td>
                 </tr>
               )}

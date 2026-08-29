@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { DEFAULT_LEVEL_OPTIONS } from "../config/schoolOptions";
 import { getClassLevels } from "../services/classLevelService";
 import { createStudent, deleteStudent, getStudents, updateStudent } from "../services/studentService";
 
@@ -11,8 +12,11 @@ const emptyForm = {
   first_name: "",
   last_name: "",
   date_of_birth: "",
+  gender: "",
+  class_name: "",
   parent_name: "",
   parent_phone: "",
+  address: "",
   monthly_amount: "",
   discount_percent: "0",
   school_year: "",
@@ -24,19 +28,25 @@ export default function StudentsPage() {
   const [students, setStudents] = useState([]);
   const [classLevels, setClassLevels] = useState([]);
   const [form, setForm] = useState(emptyForm);
+  const [filters, setFilters] = useState({
+    last_name: "",
+    first_name: "",
+    class_level: "",
+    class_name: "",
+  });
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [searchApplied, setSearchApplied] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const loadData = async () => {
-    const [studentsData, levelsData] = await Promise.all([getStudents(), getClassLevels()]);
-    setStudents(Array.isArray(studentsData) ? studentsData : []);
+  const loadClassLevels = async () => {
+    const levelsData = await getClassLevels();
     setClassLevels(Array.isArray(levelsData) ? levelsData : []);
   };
 
   useEffect(() => {
-    loadData().catch(() => setError("Impossible de charger les eleves."));
+    loadClassLevels().catch(() => setError("Impossible de charger les niveaux."));
   }, []);
 
   const averageMonthlyFee = useMemo(() => {
@@ -46,6 +56,21 @@ export default function StudentsPage() {
     const total = students.reduce((sum, item) => sum + Number(item.monthly_amount || 0), 0);
     return total / students.length;
   }, [students]);
+
+  const levelOptions = useMemo(() => {
+    if (classLevels.length) {
+      return classLevels.map((item) => ({ id: item.id, name: item.name, fromDatabase: true }));
+    }
+
+    return DEFAULT_LEVEL_OPTIONS.map((name) => ({ id: name, name, fromDatabase: false }));
+  }, [classLevels]);
+
+  const hasActiveFilters = useMemo(
+    () => Object.values(filters).some((value) => String(value || "").trim() !== ""),
+    [filters]
+  );
+
+  const filteredStudents = students;
 
   const effectiveAmountPreview = useMemo(() => {
     const amount = Number(form.monthly_amount || 0);
@@ -62,20 +87,25 @@ export default function StudentsPage() {
 
     try {
       const classLevelId = form.class_level_id ? Number(form.class_level_id) : null;
-      if (!classLevelId) {
-        throw new Error("Veuillez selectionner une classe.");
+      const selectedFallbackLevel = !classLevels.length ? form.class_level_id : "";
+      if (!classLevelId && !selectedFallbackLevel) {
+        throw new Error("Veuillez selectionner un niveau scolaire.");
       }
 
       const payload = {
         first_name: form.first_name.trim(),
         last_name: form.last_name.trim(),
         date_of_birth: form.date_of_birth || null,
+        gender: form.gender.trim() || null,
+        class_name: form.class_name.trim() || null,
         parent_name: form.parent_name.trim(),
         parent_phone: form.parent_phone.trim(),
+        address: form.address.trim() || null,
         monthly_amount: Number(form.monthly_amount || 0),
         discount_percent: Number(form.discount_percent || 0),
         school_year: form.school_year.trim() || null,
-        class_level_id: classLevelId,
+        class_level_id: classLevelId || undefined,
+        class_level: selectedFallbackLevel || undefined,
         status: form.status,
       };
 
@@ -88,7 +118,9 @@ export default function StudentsPage() {
       }
       setForm(emptyForm);
       setEditingId(null);
-      await loadData();
+      if (searchApplied) {
+        await applyStudentFilters();
+      }
     } catch (err) {
       setError(err?.response?.data?.message || err?.message || "Echec de creation eleve.");
     } finally {
@@ -110,8 +142,11 @@ export default function StudentsPage() {
       first_name: student.first_name || "",
       last_name: student.last_name || "",
       date_of_birth: student.date_of_birth || "",
+      gender: student.gender || "",
+      class_name: student.class_name || "",
       parent_name: student.parent_name || "",
       parent_phone: student.parent_phone || student.phone || "",
+      address: student.address || "",
       monthly_amount: student.monthly_amount != null ? String(student.monthly_amount) : "",
       discount_percent: student.discount_percent != null ? String(student.discount_percent) : "0",
       school_year: student.school_year || "",
@@ -135,10 +170,54 @@ export default function StudentsPage() {
         setEditingId(null);
         setForm(emptyForm);
       }
-      await loadData();
+      if (searchApplied) {
+        await applyStudentFilters();
+      }
     } catch (err) {
       setError(err?.response?.data?.message || "Echec de suppression eleve.");
     }
+  };
+
+  const applyStudentFilters = async (e) => {
+    if (e) {
+      e.preventDefault();
+    }
+
+    setError("");
+    setMessage("");
+
+    if (!hasActiveFilters) {
+      setStudents([]);
+      setSearchApplied(false);
+      setError("Veuillez saisir une recherche ou choisir un filtre.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const data = await getStudents({
+        last_name: filters.last_name || undefined,
+        first_name: filters.first_name || undefined,
+        class_level: filters.class_level || undefined,
+        class_name: filters.class_name || undefined,
+      });
+      setStudents(Array.isArray(data) ? data : []);
+      setSearchApplied(true);
+    } catch (err) {
+      setStudents([]);
+      setSearchApplied(false);
+      setError(err?.response?.data?.message || "Impossible de charger les eleves.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetFilters = () => {
+    setFilters({ last_name: "", first_name: "", class_level: "", class_name: "" });
+    setStudents([]);
+    setSearchApplied(false);
+    setError("");
+    setMessage("");
   };
 
   return (
@@ -183,6 +262,16 @@ export default function StudentsPage() {
             value={form.date_of_birth}
             onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })}
           />
+          <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+            <option value="">Sexe</option>
+            <option value="F">Fille</option>
+            <option value="M">Garcon</option>
+          </select>
+          <input
+            placeholder="Classe"
+            value={form.class_name}
+            onChange={(e) => setForm({ ...form, class_name: e.target.value })}
+          />
           <input
             placeholder="Nom du parent"
             value={form.parent_name}
@@ -194,6 +283,11 @@ export default function StudentsPage() {
             value={form.parent_phone}
             onChange={(e) => setForm({ ...form, parent_phone: e.target.value })}
             required
+          />
+          <input
+            placeholder="Adresse"
+            value={form.address}
+            onChange={(e) => setForm({ ...form, address: e.target.value })}
           />
           <input
             type="number"
@@ -223,14 +317,14 @@ export default function StudentsPage() {
             onChange={(e) => setForm({ ...form, class_level_id: e.target.value })}
             required
           >
-            <option value="">Choisir un niveau existant</option>
-            {classLevels.map((item) => (
+            <option value="">Choisir un niveau scolaire</option>
+            {levelOptions.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
               </option>
             ))}
           </select>
-          <p className="muted">Si la classe n'existe pas, cree-la d'abord dans le menu Classes.</p>
+          <p className="muted">Les niveaux de la base sont charges automatiquement; sinon une liste par defaut est utilisee.</p>
           <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
             <option value="ACTIVE">Actif</option>
             <option value="INACTIVE">Inactif</option>
@@ -259,6 +353,42 @@ export default function StudentsPage() {
 
       <section className="panel">
         <h3>Liste des eleves</h3>
+        <form className="filters-grid" onSubmit={applyStudentFilters}>
+          <input
+            placeholder="Filtrer par nom"
+            value={filters.last_name}
+            onChange={(e) => setFilters({ ...filters, last_name: e.target.value })}
+          />
+          <input
+            placeholder="Filtrer par prenom"
+            value={filters.first_name}
+            onChange={(e) => setFilters({ ...filters, first_name: e.target.value })}
+          />
+          <select
+            value={filters.class_level}
+            onChange={(e) => setFilters({ ...filters, class_level: e.target.value })}
+          >
+            <option value="">Tous les niveaux</option>
+            {levelOptions.map((item) => (
+              <option key={item.id} value={item.name}>{item.name}</option>
+            ))}
+          </select>
+          <input
+            placeholder="Filtrer par classe"
+            value={filters.class_name}
+            onChange={(e) => setFilters({ ...filters, class_name: e.target.value })}
+          />
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={resetFilters}
+          >
+            Réinitialiser les filtres
+          </button>
+          <button type="submit" disabled={loading}>
+            {loading ? "Recherche..." : "Rechercher"}
+          </button>
+        </form>
         <div className="table-wrap">
           <table>
             <thead>
@@ -266,6 +396,7 @@ export default function StudentsPage() {
                 <th>Nom</th>
                 <th>Prenom</th>
                 <th>Niveau</th>
+                <th>Classe</th>
                 <th>Annee scolaire</th>
                 <th>Parent</th>
                 <th>Telephone parent</th>
@@ -276,11 +407,12 @@ export default function StudentsPage() {
               </tr>
             </thead>
             <tbody>
-              {students.map((student) => (
+              {filteredStudents.map((student) => (
                 <tr key={student.id}>
                   <td>{student.last_name}</td>
                   <td>{student.first_name}</td>
                   <td>{student.class_level_name || student.class_level}</td>
+                  <td>{student.class_name || "-"}</td>
                   <td>{student.school_year || "-"}</td>
                   <td>{student.parent_name}</td>
                   <td>{student.parent_phone || student.phone || "-"}</td>
@@ -307,10 +439,10 @@ export default function StudentsPage() {
                   </td>
                 </tr>
               ))}
-              {students.length === 0 && (
+              {filteredStudents.length === 0 && (
                 <tr>
-                  <td colSpan="10" className="table-empty">
-                    Aucun eleve trouve.
+                  <td colSpan="11" className="table-empty">
+                    {searchApplied ? "Aucun eleve trouve." : "Lancez une recherche ou appliquez un filtre."}
                   </td>
                 </tr>
               )}

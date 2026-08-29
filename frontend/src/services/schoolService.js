@@ -25,6 +25,11 @@ export const updateSchool = async (id, payload) => {
   return response.data;
 };
 
+export const deleteSchool = async (id) => {
+  const response = await api.delete(`/api/schools/${id}`);
+  return response.data;
+};
+
 export const createSchoolAdmin = async (id, payload) => {
   const response = await api.post(`/api/schools/${id}/admin`, payload);
   return response.data;
@@ -36,6 +41,24 @@ export const uploadSchoolLogo = async (file) => {
 
   const response = await api.post("/api/schools/logo", formData, {
     headers: { "Content-Type": "multipart/form-data" },
+  });
+
+  return response.data;
+};
+
+export const importSchoolData = async (schoolId, file, onProgress) => {
+  const formData = new FormData();
+  formData.append("school_data", file);
+
+  const response = await api.post(`/api/schools/${schoolId}/import-data`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (event) => {
+      if (!onProgress || !event.total) {
+        return;
+      }
+
+      onProgress(Math.round((event.loaded * 100) / event.total));
+    },
   });
 
   return response.data;

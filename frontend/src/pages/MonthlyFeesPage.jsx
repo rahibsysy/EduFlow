@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { SCHOOL_YEAR_MONTH_OPTIONS } from "../config/schoolOptions";
 import { getMonthlyFees } from "../services/monthlyFeeService";
 
 const formatMoney = (value) =>
@@ -15,17 +16,22 @@ const statusLabel = (value) => {
 
 export default function MonthlyFeesPage() {
   const [monthlyFees, setMonthlyFees] = useState([]);
-  const [filters, setFilters] = useState({ month_label: "", year_value: "", status: "" });
+  const [filters, setFilters] = useState({
+    search: "",
+    class_level: "",
+    class_name: "",
+    month_label: "09",
+    year_value: "",
+    status: "",
+  });
+  const [filtersApplied, setFiltersApplied] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const loadData = async (params) => {
     const data = await getMonthlyFees(params);
     setMonthlyFees(Array.isArray(data) ? data : []);
   };
-
-  useEffect(() => {
-    loadData().catch(() => setError("Impossible de charger les mensualites."));
-  }, []);
 
   const totals = useMemo(() => {
     return monthlyFees.reduce(
@@ -42,16 +48,39 @@ export default function MonthlyFeesPage() {
   const applyFilters = async (e) => {
     e.preventDefault();
     setError("");
+    setLoading(true);
     try {
       const params = {
+        search: filters.search || undefined,
+        class_level: filters.class_level || undefined,
+        class_name: filters.class_name || undefined,
         month_label: filters.month_label || undefined,
         year_value: filters.year_value || undefined,
         status: filters.status || undefined,
       };
       await loadData(params);
+      setFiltersApplied(true);
     } catch {
+      setMonthlyFees([]);
+      setFiltersApplied(false);
       setError("Impossible d'appliquer les filtres.");
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      search: "",
+      class_level: "",
+      class_name: "",
+      month_label: "09",
+      year_value: "",
+      status: "",
+    });
+    setMonthlyFees([]);
+    setFiltersApplied(false);
+    setError("");
   };
 
   return (
@@ -79,10 +108,28 @@ export default function MonthlyFeesPage() {
       <section className="panel">
         <h3>Filtres</h3>
         <form className="form-grid" onSubmit={applyFilters}>
-          <input
-            placeholder="Mois (01-12)"
+          <select
             value={filters.month_label}
             onChange={(e) => setFilters({ ...filters, month_label: e.target.value })}
+          >
+            {SCHOOL_YEAR_MONTH_OPTIONS.map((month) => (
+              <option key={month.value} value={month.value}>{month.label}</option>
+            ))}
+          </select>
+          <input
+            placeholder="Rechercher un eleve"
+            value={filters.search}
+            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+          />
+          <input
+            placeholder="Filtrer par niveau"
+            value={filters.class_level}
+            onChange={(e) => setFilters({ ...filters, class_level: e.target.value })}
+          />
+          <input
+            placeholder="Filtrer par classe/groupe"
+            value={filters.class_name}
+            onChange={(e) => setFilters({ ...filters, class_name: e.target.value })}
           />
           <input
             type="number"
@@ -99,7 +146,12 @@ export default function MonthlyFeesPage() {
             <option value="PARTIAL">Partiel</option>
             <option value="UNPAID">Impaye</option>
           </select>
-          <button type="submit">Appliquer</button>
+          <button type="button" className="secondary-btn" onClick={resetFilters}>
+            Réinitialiser
+          </button>
+          <button type="submit" disabled={loading}>
+            {loading ? "Chargement..." : "Appliquer"}
+          </button>
         </form>
         {error && <p className="error-text">{error}</p>}
       </section>
@@ -137,7 +189,7 @@ export default function MonthlyFeesPage() {
               {monthlyFees.length === 0 && (
                 <tr>
                   <td colSpan="8" className="table-empty">
-                    Aucune mensualite trouvee.
+                    {filtersApplied ? "Aucune mensualite trouvee." : "Appliquez un filtre pour afficher les mensualites."}
                   </td>
                 </tr>
               )}

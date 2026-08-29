@@ -20,12 +20,16 @@ class PaymentService
                 p.*,
                 s.first_name,
                 s.last_name,
+                COALESCE(cl.group_name, s.class_name) AS class_name,
+                COALESCE(cl.level_name, cl.name, s.class_level) AS class_level_name,
                 mf.month_label,
                 mf.year_value,
+                mf.status AS payment_status,
                 pm.label AS payment_method_label
             FROM payments p
             INNER JOIN students s ON s.id = p.student_id
             INNER JOIN monthly_fees mf ON mf.id = p.monthly_fee_id
+            LEFT JOIN class_levels cl ON cl.id = s.class_level_id
             LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id
         ';
 
@@ -201,5 +205,198 @@ class PaymentService
         }
 
         return ['id' => (int)$fallback['id'], 'code' => (string)$fallback['code']];
+    }
+
+    public function getById(int $paymentId): array|false
+    {
+        $pdo = Database::connect();
+        [$role, $schoolId] = $this->authScope();
+
+        $sql = '
+            SELECT
+                p.*,
+                s.first_name,
+                s.last_name,
+                mf.month_label,
+                mf.year_value,
+                pm.label AS payment_method_label
+            FROM payments p
+            INNER JOIN students s ON s.id = p.student_id
+            INNER JOIN monthly_fees mf ON mf.id = p.monthly_fee_id
+            LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id
+            WHERE p.id = ?
+        ';
+
+        if ($role !== 'super_admin') {
+            $sql .= ' AND p.school_id = ?';
+            $stmt = $pdo->prepare($sql . ' LIMIT 1');
+            $stmt->execute([$paymentId, $schoolId]);
+        } else {
+            $stmt = $pdo->prepare($sql . ' LIMIT 1');
+            $stmt->execute([$paymentId]);
+        }
+
+        return $stmt->fetch() ?: false;
+    }
+
+    public function update(int $paymentId, array $data): array
+    {
+        $pdo = Database::connect();
+        [$role, $schoolId] = $this->authScope();
+
+        $payment = $this->getById($paymentId);
+        if (!$payment) {
+            return ['error' => 'Payment not found'];
+        }
+
+        $amountPaid = isset($data['amount_paid']) ? round((float)$data['amount_paid'], 2) : (float)$payment['amount_paid'];
+        if ($amountPaid <= 0) {
+            return ['error' => 'amount_paid must be greater than 0'];
+        }
+
+        $paymentDate = isset($data['payment_date']) ? trim((string)$data['payment_date']) : $payment['payment_date'];
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $paymentDate)) {
+            return ['error' => 'Invalid payment_date format'];
+        }
+
+        $paymentMethod = $this->resolvePaymentMethod($pdo, $data);
+        if (isset($paymentMethod['error'])) {
+            return $paymentMethod;
+        }
+
+        try {
+            $pdo->beginTransaction();
+
+            // Get the current monthly fee
+            $feeStmt = $pdo->prepare('SELECT * FROM monthly_fees WHERE id = ? LIMIT 1');
+            $feeStmt->execute([$payment['monthly_fee_id']]);
+            $fee = $feeStmt->fetch();
+
+            if (!$fee) {
+                $pdo->rollBack();
+                return ['error' => 'Monthly fee not found'];
+            }
+
+            $totalAmount = (float)$fee['total_amount'];
+            $oldAmountPaid = (float)$payment['amount_paid'];
+            $currentFeeAmountPaid = (float)$fee['amount_paid'];
+            
+            // Calculate new fee state
+            $newFeeAmountPaid = round($currentFeeAmountPaid - $oldAmountPaid + $amountPaid, 2);
+            $newRemaining = round(max(0, $totalAmount - $newFeeAmountPaid), 2);
+            
+            // Validate new amount doesn't exceed total
+            if ($newFeeAmountPaid > $totalAmount) {
+                $pdo->rollBack();
+                return ['error' => 'Total amount paid would exceed monthly fee total'];
+            }
+
+            // Update payment
+            $updatePayment = $pdo->prepare('
+                UPDATE payments
+                SET amount_paid = ?, payment_date = ?, payment_method_id = ?, payment_method = ?
+                WHERE id = ?
+            ');
+            $updatePayment->execute([
+                $amountPaid,
+                $paymentDate,
+                $paymentMethod['id'],
+                $paymentMethod['code'],
+                $paymentId,
+            ]);
+
+            // Update monthly fee status
+            $newStatus = 'UNPAID';
+            if ($newRemaining <= 0) {
+                $newStatus = 'PAID';
+            } elseif ($newFeeAmountPaid > 0) {
+                $newStatus = 'PARTIAL';
+            }
+
+            $updateFee = $pdo->prepare('
+                UPDATE monthly_fees
+                SET amount_paid = ?, remaining_amount = ?, status = ?
+                WHERE id = ?
+            ');
+            $updateFee->execute([$newFeeAmountPaid, $newRemaining, $newStatus, $payment['monthly_fee_id']]);
+
+            $pdo->commit();
+
+            return [
+                'id' => $paymentId,
+                'monthly_fee_status' => $newStatus,
+                'message' => 'Payment updated successfully',
+            ];
+        } catch (Throwable) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            return ['error' => 'Payment update failed'];
+        }
+    }
+
+    public function delete(int $paymentId): array
+    {
+        $pdo = Database::connect();
+        [$role, $schoolId] = $this->authScope();
+
+        $payment = $this->getById($paymentId);
+        if (!$payment) {
+            return ['error' => 'Payment not found'];
+        }
+
+        try {
+            $pdo->beginTransaction();
+
+            // Get the monthly fee to update its status
+            $feeStmt = $pdo->prepare('SELECT * FROM monthly_fees WHERE id = ? LIMIT 1');
+            $feeStmt->execute([$payment['monthly_fee_id']]);
+            $fee = $feeStmt->fetch();
+
+            if (!$fee) {
+                $pdo->rollBack();
+                return ['error' => 'Monthly fee not found'];
+            }
+
+            // Delete the payment
+            $deleteStmt = $pdo->prepare('DELETE FROM payments WHERE id = ?');
+            $deleteStmt->execute([$paymentId]);
+
+            // Recalculate monthly fee amounts
+            $paymentsStmt = $pdo->prepare('
+                SELECT COALESCE(SUM(amount_paid), 0) as total_paid
+                FROM payments
+                WHERE monthly_fee_id = ?
+            ');
+            $paymentsStmt->execute([$payment['monthly_fee_id']]);
+            $result = $paymentsStmt->fetch();
+            $totalPaid = round((float)($result['total_paid'] ?? 0), 2);
+
+            $totalAmount = (float)$fee['total_amount'];
+            $remaining = round(max(0, $totalAmount - $totalPaid), 2);
+
+            $newStatus = 'UNPAID';
+            if ($remaining <= 0) {
+                $newStatus = 'PAID';
+            } elseif ($totalPaid > 0) {
+                $newStatus = 'PARTIAL';
+            }
+
+            $updateFee = $pdo->prepare('
+                UPDATE monthly_fees
+                SET amount_paid = ?, remaining_amount = ?, status = ?
+                WHERE id = ?
+            ');
+            $updateFee->execute([$totalPaid, $remaining, $newStatus, $payment['monthly_fee_id']]);
+
+            $pdo->commit();
+
+            return ['id' => $paymentId, 'message' => 'Payment deleted successfully'];
+        } catch (Throwable) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            return ['error' => 'Payment deletion failed'];
+        }
     }
 }

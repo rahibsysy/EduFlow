@@ -29,8 +29,11 @@ export default function DashboardPage() {
   useEffect(() => {
     setLoading(true);
     setError("");
+
     getDashboardStats()
-      .then((data) => setStats(data))
+      .then((statsData) => {
+        setStats(statsData);
+      })
       .catch(() => setError("Impossible de charger le dashboard."))
       .finally(() => setLoading(false));
   }, []);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import useAuth from "../hooks/useAuth";
-import { createUser, getUsers, resetUserPassword } from "../services/userService";
+import { createUser, deleteUser, getUsers, resetUserPassword, updateUser } from "../services/userService";
 import { getCurrentSchool, getSchools } from "../services/schoolService";
 
 const EMPTY_FORM = {
@@ -28,9 +28,12 @@ export default function AdminPage() {
   const [schools, setSchools] = useState([]);
   const [currentSchool, setCurrentSchool] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState("");
   const [resetMessage, setResetMessage] = useState("");
   const [error, setError] = useState("");
+
+  const isEditing = editingId !== null;
 
   const selectedSchool = useMemo(
     () => schools.find((item) => String(item.id) === String(form.school_id)) || null,
@@ -76,10 +79,15 @@ export default function AdminPage() {
       const payload = {
         first_name: form.first_name,
         last_name: form.last_name,
-        email_local_part: form.email_local_part,
-        password: form.password,
         status: form.status,
       };
+
+      if (!isEditing) {
+        payload.email_local_part = form.email_local_part;
+        payload.password = form.password;
+      } else if (form.password) {
+        payload.password = form.password;
+      }
 
       if (isSuperAdmin) {
         payload.role = form.role;
@@ -90,12 +98,61 @@ export default function AdminPage() {
         payload.role = form.role;
       }
 
-      const created = await createUser(payload);
-      setMessage(`Utilisateur cree: ${created.email}`);
+      if (isEditing) {
+        await updateUser(editingId, payload);
+        setMessage("Utilisateur modifie avec succes.");
+      } else {
+        const created = await createUser(payload);
+        setMessage(`Utilisateur cree: ${created.email}`);
+      }
+
+      setEditingId(null);
       setForm((prev) => ({ ...EMPTY_FORM, school_id: prev.school_id || form.school_id }));
       await load();
     } catch (err) {
-      setError(err?.response?.data?.message || "Echec de creation utilisateur.");
+      setError(err?.response?.data?.message || "Echec de sauvegarde utilisateur.");
+    }
+  };
+
+  const handleEdit = (targetUser) => {
+    setEditingId(targetUser.id);
+    setForm({
+      first_name: targetUser.first_name || "",
+      last_name: targetUser.last_name || "",
+      email_local_part: "",
+      password: "",
+      role: targetUser.role || "user",
+      school_id: targetUser.school_id ? String(targetUser.school_id) : "",
+      status: targetUser.status || "ACTIVE",
+    });
+    setMessage("");
+    setResetMessage("");
+    setError("");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm((prev) => ({ ...EMPTY_FORM, school_id: prev.school_id || form.school_id }));
+  };
+
+  const handleDelete = async (targetUser) => {
+    if (!window.confirm(`Supprimer le compte ${targetUser.email} ?`)) {
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    setResetMessage("");
+
+    try {
+      await deleteUser(targetUser.id);
+      setMessage("Utilisateur supprime avec succes.");
+      if (editingId === targetUser.id) {
+        cancelEdit();
+      }
+      await load();
+    } catch (err) {
+      setError(err?.response?.data?.message || "Echec de suppression utilisateur.");
     }
   };
 
@@ -134,7 +191,7 @@ export default function AdminPage() {
       </section>
 
       <section className="panel">
-        <h3>Creer un utilisateur</h3>
+        <h3>{isEditing ? "Modifier un utilisateur" : "Creer un utilisateur"}</h3>
         <form className="form-grid" onSubmit={handleSubmit}>
           <input placeholder="Prenom" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
           <input placeholder="Nom" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />
@@ -163,21 +220,36 @@ export default function AdminPage() {
             </select>
           )}
 
-          <input
-            placeholder="Prefixe email (ex: salma.alaoui)"
-            value={form.email_local_part}
-            onChange={(e) => setForm({ ...form, email_local_part: e.target.value })}
-          />
-          {form.role !== "super_admin" && (
+          {!isEditing && (
+            <input
+              placeholder="Prefixe email (ex: salma.alaoui)"
+              value={form.email_local_part}
+              onChange={(e) => setForm({ ...form, email_local_part: e.target.value })}
+            />
+          )}
+          {!isEditing && form.role !== "super_admin" && (
             <p className="muted">Apercu email: {(form.email_local_part || "user") + "@" + emailDomain}</p>
           )}
 
-          <input type="password" placeholder="Mot de passe" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+          <input
+            type="password"
+            placeholder={isEditing ? "Nouveau mot de passe (optionnel)" : "Mot de passe"}
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            required={!isEditing}
+          />
           <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
             <option value="ACTIVE">Actif</option>
             <option value="INACTIVE">Inactif</option>
           </select>
-          <button type="submit">Creer l'utilisateur</button>
+          <div className="form-actions">
+            <button type="submit">{isEditing ? "Enregistrer" : "Creer l'utilisateur"}</button>
+            {isEditing && (
+              <button type="button" className="secondary-btn" onClick={cancelEdit}>
+                Annuler
+              </button>
+            )}
+          </div>
         </form>
         {message && <p className="muted">{message}</p>}
         {resetMessage && <p className="muted">{resetMessage}</p>}
@@ -196,34 +268,59 @@ export default function AdminPage() {
                 <th>Role</th>
                 <th>Statut</th>
                 <th>Ecole</th>
-                {isSuperAdmin && <th>Actions</th>}
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.id}</td>
-                  <td>{item.first_name} {item.last_name}</td>
-                  <td>{item.email}</td>
-                  <td>{roleLabel[item.role] || item.role}</td>
-                  <td>{item.status === "ACTIVE" ? "Actif" : "Inactif"}</td>
-                  <td>{item.school_name || "-"}</td>
-                  {isSuperAdmin && (
+              {users.map((item) => {
+                const canEdit = isSuperAdmin || (isAdmin && item.role === "user");
+                const canDelete = isSuperAdmin && item.id !== user?.id;
+
+                return (
+                  <tr key={item.id}>
+                    <td>{item.id}</td>
+                    <td>{item.first_name} {item.last_name}</td>
+                    <td>{item.email}</td>
+                    <td>{roleLabel[item.role] || item.role}</td>
+                    <td>{item.status === "ACTIVE" ? "Actif" : "Inactif"}</td>
+                    <td>{item.school_name || "-"}</td>
                     <td>
-                      <button
-                        type="button"
-                        onClick={() => handleResetPassword(item)}
-                        disabled={item.role === "super_admin"}
-                      >
-                        Reset MDP
-                      </button>
+                      <div className="table-actions">
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => handleEdit(item)}
+                          disabled={!canEdit}
+                        >
+                          Modifier
+                        </button>
+                        {isSuperAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleResetPassword(item)}
+                            disabled={item.role === "super_admin"}
+                          >
+                            Reset MDP
+                          </button>
+                        )}
+                        {isSuperAdmin && (
+                          <button
+                            type="button"
+                            className="danger-btn"
+                            onClick={() => handleDelete(item)}
+                            disabled={!canDelete}
+                          >
+                            Supprimer
+                          </button>
+                        )}
+                      </div>
                     </td>
-                  )}
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
               {!users.length && (
                 <tr>
-                  <td colSpan={isSuperAdmin ? 7 : 6} className="table-empty">Aucun utilisateur trouve.</td>
+                  <td colSpan="7" className="table-empty">Aucun utilisateur trouve.</td>
                 </tr>
               )}
             </tbody>

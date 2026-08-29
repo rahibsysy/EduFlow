@@ -97,12 +97,14 @@ export default function DashboardLayout() {
                 <li><NavLink to="/super-admin/dashboard">Vue globale</NavLink></li>
                 <li><NavLink to="/super-admin/schools">Ecoles</NavLink></li>
                 <li><NavLink to="/admin">Utilisateurs</NavLink></li>
+                <li><NavLink to="/schedules">Emploi du temps</NavLink></li>
               </>
             ) : (
               <>
                 <li><NavLink to="/dashboard">Tableau de bord</NavLink></li>
                 <li><NavLink to="/students">Eleves</NavLink></li>
                 <li><NavLink to="/classes">Classes</NavLink></li>
+                <li><NavLink to="/schedules">Emploi du temps</NavLink></li>
                 <li><NavLink to="/payments">Paiements</NavLink></li>
                 <li><NavLink to="/monthly-fees">Mensualites</NavLink></li>
                 <li><NavLink to="/unpaid">Impayes</NavLink></li>

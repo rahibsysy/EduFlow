@@ -41,13 +41,19 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 11px 12px;
   font: inherit;
   background: #fff;
+}
+
+textarea {
+  min-height: 92px;
+  resize: vertical;
 }
 
 button {
@@ -105,6 +111,107 @@ button:disabled {
   margin-top: 14px;
   display: grid;
   gap: 10px;
+}
+
+.filters-grid {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.filter-actions {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.form-actions,
+.table-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.form-actions button,
+.table-actions button {
+  min-width: 96px;
+  white-space: nowrap;
+}
+
+.secondary-btn {
+  background: #edf5ff;
+  color: #27467a;
+  border: 1px solid #d4e2f8;
+}
+
+.danger-btn {
+  background: #fff1f2;
+  color: #b4233a;
+  border: 1px solid #fecdd3;
+}
+
+.schedule-form {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.schedule-form textarea,
+.schedule-form .form-actions {
+  grid-column: 1 / -1;
+}
+
+.schedule-filters {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.teacher-schedule-grid {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.teacher-schedule-card {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.text-link {
+  width: fit-content;
+  color: var(--primary);
+  font-weight: 800;
+}
+
+.upload-dropzone {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px dashed #9db7df;
+  border-radius: 14px;
+  background: #f8fbff;
+}
+
+.upload-dropzone-active {
+  border-color: var(--secondary);
+  background: #eefaf7;
+}
+
+.progress-wrap {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(120deg, var(--primary), var(--secondary));
+  transition: width 180ms ease;
 }
 
 .email-builder {
@@ -270,6 +377,119 @@ button:disabled {
   font-weight: 700;
 }
 
+.alerts-panel {
+  padding: 20px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.alerts-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.alert-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: start;
+  padding: 18px;
+  min-height: 142px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(14, 42, 82, 0.08);
+}
+
+.alert-card-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  font-weight: 900;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.alert-card-badge {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.alert-card-content {
+  min-width: 0;
+}
+
+.alert-card h3 {
+  margin: 6px 0 4px;
+  font-size: 1.5rem;
+}
+
+.alert-card-critical {
+  color: #8f1230;
+  border-color: #fecdd3;
+  background: linear-gradient(180deg, #fff6f7, #ffe4e6);
+}
+
+.alert-card-high {
+  color: #9a3412;
+  border-color: #fed7aa;
+  background: linear-gradient(180deg, #fff8f1, #ffedd5);
+}
+
+.alert-card-medium {
+  color: #854d0e;
+  border-color: #fde68a;
+  background: linear-gradient(180deg, #fffdf2, #fef3c7);
+}
+
+.alert-card-info {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, #f8fbff, #dbeafe);
+}
+
+.alerts-total {
+  flex: 0 0 auto;
+  color: #27467a;
+  background: #edf5ff;
+  border: 1px solid #d4e2f8;
+  border-radius: 999px;
+  padding: 8px 11px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.empty-alerts {
+  grid-column: 1 / -1;
+  padding: 20px;
+  text-align: center;
+  border-radius: 16px;
+  background: #f8fafc;
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .alerts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .kpi h2 {
   margin-top: 7px;
   font-size: clamp(24px, 3vw, 36px);
@@ -355,6 +575,308 @@ th {
   padding: 24px;
 }
 
+.success-text {
+  margin-top: 10px;
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.schedule-board-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.schedule-board-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.schedule-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.schedule-mode-tabs button {
+  border-radius: 6px;
+  background: transparent;
+  color: #35507c;
+}
+
+.schedule-mode-tabs button.active {
+  background: linear-gradient(120deg, var(--primary), var(--secondary));
+  color: #fff;
+}
+
+.schedule-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.4fr) minmax(170px, 0.8fr) minmax(230px, 1fr) minmax(140px, auto);
+  gap: 10px;
+  align-items: end;
+}
+
+.schedule-toolbar label,
+.schedule-modal-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.schedule-toolbar span,
+.schedule-modal-form span {
+  color: #43618f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.schedule-teacher-picker {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.schedule-pdf-btn {
+  min-height: 44px;
+}
+
+.schedule-grid-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.schedule-week-grid {
+  min-width: 980px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.schedule-week-grid th,
+.schedule-week-grid td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  padding: 8px;
+  vertical-align: top;
+}
+
+.schedule-week-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #edf5ff;
+  color: #27467a;
+  text-align: center;
+}
+
+.schedule-week-grid tbody th {
+  width: 74px;
+  color: #52637d;
+  background: #f8fbff;
+  font-weight: 800;
+}
+
+.schedule-week-grid td {
+  height: 104px;
+}
+
+.schedule-cell {
+  min-height: 88px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.schedule-pause-row th,
+.schedule-pause-row td {
+  background: #edf5ff;
+}
+
+.schedule-pause-label {
+  display: grid;
+  place-items: center;
+  min-height: 62px;
+  border: 1px dashed #b7c8e8;
+  border-radius: 8px;
+  color: #27467a;
+  font-weight: 900;
+}
+
+.schedule-course {
+  display: grid;
+  gap: 2px;
+  min-height: 62px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-align: left;
+  color: #10203a;
+  background: #eef6ff;
+}
+
+.schedule-course strong {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.schedule-course span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.schedule-course small {
+  color: #52637d;
+  font-size: 12px;
+}
+
+.schedule-course-blue {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.schedule-course-green {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.schedule-course-amber {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.schedule-course-rose {
+  border-color: #fecdd3;
+  background: #fff1f2;
+}
+
+.schedule-course-violet {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+}
+
+.schedule-course-cyan {
+  border-color: #a5f3fc;
+  background: #ecfeff;
+}
+
+.schedule-course-external {
+  border-color: #c4b5fd;
+  background: repeating-linear-gradient(135deg, #f5f3ff, #f5f3ff 8px, #ede9fe 8px, #ede9fe 16px);
+}
+
+.schedule-empty-cell,
+.schedule-add-mini {
+  border: 1px dashed #b7c8e8;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #52637d;
+  font-size: 13px;
+  min-height: 38px;
+}
+
+.schedule-add-mini {
+  width: 34px;
+  min-height: 30px;
+  padding: 0;
+  justify-self: end;
+  font-size: 18px;
+}
+
+.teacher-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compact-header {
+  margin-bottom: 8px;
+}
+
+.schedule-teacher-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.schedule-teacher-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.schedule-teacher-form span {
+  color: #43618f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.schedule-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(16, 32, 58, 0.42);
+}
+
+.schedule-modal {
+  width: min(860px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(8, 17, 38, 0.26);
+  padding: 18px;
+}
+
+.schedule-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-close-btn {
+  width: auto;
+}
+
+.schedule-modal-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.schedule-pdf-modal {
+  width: min(980px, 100%);
+}
+
+.schedule-pdf-preview {
+  display: block;
+  width: 100%;
+  height: min(72vh, 720px);
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.full-field {
+  grid-column: 1 / -1;
+}
+
 @keyframes fadeUp {
   from {
     opacity: 0;
@@ -391,5 +913,22 @@ th {
     align-items: flex-start;
     gap: 10px;
     flex-direction: column;
+  }
+
+  .schedule-board-header,
+  .schedule-modal-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .schedule-toolbar,
+  .schedule-teacher-picker,
+  .schedule-teacher-form,
+  .schedule-modal-form {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-close-btn {
+    width: 100%;
   }
 }

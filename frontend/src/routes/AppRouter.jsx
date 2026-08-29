@@ -16,6 +16,7 @@ import SuperAdminDashboardPage from "../pages/SuperAdminDashboardPage";
 import SchoolsPage from "../pages/SchoolsPage";
 import SchoolDetailsPage from "../pages/SchoolDetailsPage";
 import SchoolAdminCreatePage from "../pages/SchoolAdminCreatePage";
+import SchedulesPage from "../pages/SchedulesPage";
 
 export default function AppRouter() {
   return (
@@ -33,6 +34,7 @@ export default function AppRouter() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/students" element={<StudentsPage />} />
           <Route path="/classes" element={<ClassesPage />} />
+          <Route path="/schedules" element={<SchedulesPage />} />
           <Route path="/students/new" element={<StudentFormPage />} />
           <Route path="/payments" element={<PaymentsPage />} />
           <Route path="/monthly-fees" element={<MonthlyFeesPage />} />

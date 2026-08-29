@@ -19,6 +19,11 @@ class RoleMiddleware
         $role = (string)($authUser['role'] ?? '');
         $requiredRoles = is_array($this->requiredRole) ? $this->requiredRole : [$this->requiredRole];
 
+        // Super admin can always access
+        if ($role === 'super_admin') {
+            return;
+        }
+
         if (!in_array($role, $requiredRoles, true)) {
             Response::json(['message' => 'Forbidden'], 403);
         }

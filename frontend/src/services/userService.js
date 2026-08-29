@@ -5,6 +5,11 @@ export const getUsers = async () => {
   return response.data;
 };
 
+export const getUserById = async (id) => {
+  const response = await api.get(`/api/users/${id}`);
+  return response.data;
+};
+
 export const createUser = async (payload) => {
   const response = await api.post("/api/users", payload);
   return response.data;
@@ -12,6 +17,11 @@ export const createUser = async (payload) => {
 
 export const updateUser = async (id, payload) => {
   const response = await api.put(`/api/users/${id}`, payload);
+  return response.data;
+};
+
+export const deleteUser = async (id) => {
+  const response = await api.delete(`/api/users/${id}`);
   return response.data;
 };
 

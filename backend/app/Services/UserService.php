@@ -308,4 +308,54 @@ class UserService
         $stmt->execute([$userId]);
         return $stmt->fetch();
     }
+
+    public function getById(int $userId): array|false
+    {
+        $user = $this->findUserById($userId);
+        if (!$user) {
+            return false;
+        }
+
+        return [
+            'id' => (int)$user['id'],
+            'school_id' => $user['school_id'] ? (int)$user['school_id'] : null,
+            'first_name' => $user['first_name'],
+            'last_name' => $user['last_name'],
+            'email' => $user['email'],
+            'role' => $user['role'],
+            'status' => $user['status'],
+            'created_at' => $user['created_at'],
+            'updated_at' => $user['updated_at'],
+        ];
+    }
+
+    public function delete(int $userId): array
+    {
+        $authUser = Request::get('auth_user', []);
+        $actorRole = (string)($authUser['role'] ?? '');
+        $actorId = isset($authUser['id']) ? (int)$authUser['id'] : 0;
+
+        if ($actorRole !== 'super_admin') {
+            return ['error' => 'Forbidden'];
+        }
+
+        if ((int)$userId === $actorId) {
+            return ['error' => 'Cannot delete your own account'];
+        }
+
+        $user = $this->findUserById($userId);
+        if (!$user) {
+            return ['error' => 'User not found'];
+        }
+
+        try {
+            $pdo = Database::connect();
+            $stmt = $pdo->prepare('DELETE FROM users WHERE id = ?');
+            $stmt->execute([$userId]);
+
+            return ['id' => $userId, 'message' => 'User deleted successfully'];
+        } catch (PDOException) {
+            return ['error' => 'User deletion failed'];
+        }
+    }
 }

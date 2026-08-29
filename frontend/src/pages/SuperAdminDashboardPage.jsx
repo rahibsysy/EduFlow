@@ -18,7 +18,9 @@ export default function SuperAdminDashboardPage() {
   });
 
   useEffect(() => {
-    getSuperAdminDashboard().then(setStats).catch(() => null);
+    getSuperAdminDashboard()
+      .then(setStats)
+      .catch(() => null);
   }, []);
 
   return (

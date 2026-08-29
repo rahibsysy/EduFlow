@@ -25,6 +25,17 @@ class UserController
         Response::json($result, 201);
     }
 
+    public function show(): void
+    {
+        $id = (int)Request::param('id', 0);
+        $result = (new UserService())->getById($id);
+        if (!$result) {
+            Response::json(['message' => 'User not found'], 404);
+        }
+
+        Response::json($result);
+    }
+
     public function update(): void
     {
         $userId = (int)Request::param('id', 0);
@@ -53,6 +64,22 @@ class UserController
                 $result['error'] === 'Only super admin can reset passwords' ||
                 $result['error'] === 'Super admin cannot reset own password from this action'
             ) {
+                $status = 403;
+            }
+            Response::json(['message' => $result['error']], $status);
+        }
+
+        Response::json($result);
+    }
+
+    public function delete(): void
+    {
+        $userId = (int)Request::param('id', 0);
+        $result = (new UserService())->delete($userId);
+
+        if (isset($result['error'])) {
+            $status = $result['error'] === 'User not found' ? 404 : 422;
+            if ($result['error'] === 'Forbidden') {
                 $status = 403;
             }
             Response::json(['message' => $result['error']], $status);
