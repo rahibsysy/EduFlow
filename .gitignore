@@ -43,6 +43,5 @@ frontend/coverage/
 tmp/
 temp/
 .cache/
-# Large Files & Docker
-salma-mysql-image.tar
 backend/storage/backups/
+salma-mysql-image.tar
