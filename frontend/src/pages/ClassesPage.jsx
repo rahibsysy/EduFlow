@@ -7,13 +7,20 @@ import {
 } from "../services/classLevelService";
 import { getSchools } from "../services/schoolService";
 import { getStudents, importStudents } from "../services/studentService";
+import { getSubjects, updateSubjectWeeklyHours } from "../services/subjectService";
 import useAuth from "../hooks/useAuth";
+
+const defaultSchoolYear = "2026/2027";
+const schoolYearOptions = Array.from({ length: 8 }, (_, index) => {
+  const start = 2024 + index;
+  return `${start}/${start + 1}`;
+});
 
 const emptyForm = {
   school_id: "",
   level_name: "",
   group_name: "",
-  school_year: "",
+  school_year: defaultSchoolYear,
 };
 
 const emptyImportForm = {
@@ -21,6 +28,19 @@ const emptyImportForm = {
 };
 
 const isValidImportFile = (file) => /\.(xlsx|csv)$/i.test(file?.name || "");
+
+const normalizeSchoolYear = (value) => String(value || defaultSchoolYear).replace("-", "/");
+
+const classGroupLabel = (item) => {
+  const group = String(item.group_name || "").trim();
+  if (group) {
+    return group;
+  }
+
+  const level = String(item.level_name || "").trim();
+  const name = String(item.name || "").trim();
+  return name && name !== level ? name : "-";
+};
 
 export default function ClassesPage() {
   const { user } = useAuth();
@@ -33,10 +53,13 @@ export default function ClassesPage() {
   const [importProgress, setImportProgress] = useState(0);
   const [selectedClass, setSelectedClass] = useState(null);
   const [classStudents, setClassStudents] = useState([]);
+  const [classSubjects, setClassSubjects] = useState([]);
+  const [subjectSavingId, setSubjectSavingId] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [classStudentsLoading, setClassStudentsLoading] = useState(false);
+  const [classSubjectsLoading, setClassSubjectsLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -80,7 +103,7 @@ export default function ClassesPage() {
         name: groupName ? `${levelName} ${groupName}` : levelName,
         level_name: levelName,
         group_name: groupName || null,
-        school_year: form.school_year.trim() || null,
+        school_year: normalizeSchoolYear(form.school_year),
       };
 
       if (isSuperAdmin) {
@@ -111,7 +134,7 @@ export default function ClassesPage() {
       school_id: item.school_id ? String(item.school_id) : form.school_id,
       level_name: item.level_name || item.name || "",
       group_name: item.group_name || "",
-      school_year: item.school_year || "",
+      school_year: normalizeSchoolYear(item.school_year),
     });
     setMessage("");
     setError("");
@@ -152,25 +175,58 @@ export default function ClassesPage() {
   const showClass = async (item) => {
     setSelectedClass(item);
     setClassStudents([]);
+    setClassSubjects([]);
     setError("");
     setClassStudentsLoading(true);
+    setClassSubjectsLoading(true);
 
     try {
-      const data = await getStudents({
-        class_level_id: item.id,
-        school_id: isSuperAdmin ? item.school_id : undefined,
-      });
-      setClassStudents(Array.isArray(data) ? data : []);
+      const [studentsData, subjectsData] = await Promise.all([
+        getStudents({
+          class_level_id: item.id,
+          school_id: isSuperAdmin ? item.school_id : undefined,
+        }),
+        getSubjects({ class_level_id: item.id }),
+      ]);
+      setClassStudents(Array.isArray(studentsData) ? studentsData : []);
+      setClassSubjects(Array.isArray(subjectsData) ? subjectsData : []);
     } catch (err) {
-      setError(err?.response?.data?.message || "Impossible de charger les eleves de cette classe.");
+      setError(err?.response?.data?.message || "Impossible de charger les informations de cette classe.");
     } finally {
       setClassStudentsLoading(false);
+      setClassSubjectsLoading(false);
     }
   };
 
   const closeClass = () => {
     setSelectedClass(null);
     setClassStudents([]);
+    setClassSubjects([]);
+  };
+
+  const updateSubjectHours = async (subject) => {
+    if (!selectedClass?.id || !subject?.id) {
+      return;
+    }
+
+    setMessage("");
+    setError("");
+    setSubjectSavingId(subject.id);
+
+    try {
+      const weeklyHours = Number(subject.weekly_hours || 0);
+      const result = await updateSubjectWeeklyHours(subject.id, selectedClass.id, weeklyHours);
+      setClassSubjects((prev) =>
+        prev.map((item) =>
+          item.id === subject.id ? { ...item, weekly_hours: result.weekly_hours } : item
+        )
+      );
+      setMessage("Volume horaire enregistre avec succes.");
+    } catch (err) {
+      setError(err?.response?.data?.message || "Impossible d'enregistrer le volume horaire.");
+    } finally {
+      setSubjectSavingId(null);
+    }
   };
 
   const handleImportFile = (file) => {
@@ -274,11 +330,17 @@ export default function ClassesPage() {
             value={form.group_name}
             onChange={(e) => setForm({ ...form, group_name: e.target.value })}
           />
-          <input
-            placeholder="Annee scolaire (ex: 2026-2027)"
+          <select
             value={form.school_year}
             onChange={(e) => setForm({ ...form, school_year: e.target.value })}
-          />
+            required
+          >
+            {schoolYearOptions.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
           <button type="submit" disabled={saving}>
             {saving ? "Enregistrement..." : editingId ? "Mettre a jour" : "Creer la classe"}
           </button>
@@ -339,9 +401,8 @@ export default function ClassesPage() {
           <table>
             <thead>
               <tr>
-                <th>Classe</th>
                 <th>Niveau</th>
-                <th>Classe/Groupe</th>
+                <th>Classe</th>
                 <th>Annee scolaire</th>
                 <th>Actions</th>
               </tr>
@@ -350,7 +411,7 @@ export default function ClassesPage() {
               {items.map((item) => (
                 <tr key={item.id}>
                   <td>{item.level_name || item.name}</td>
-                  <td>{item.group_name || "-"}</td>
+                  <td>{classGroupLabel(item)}</td>
                   <td>{item.school_year || "-"}</td>
                   <td>
                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
@@ -406,6 +467,66 @@ export default function ClassesPage() {
           </div>
 
           <div className="table-wrap">
+            <h4>Volumes horaires par matiere</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Matiere</th>
+                  <th>Heures par semaine</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {classSubjects.map((subject) => (
+                  <tr key={subject.id}>
+                    <td>{subject.code || subject.name}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="0"
+                        max="40"
+                        value={subject.weekly_hours ?? 0}
+                        onChange={(e) =>
+                          setClassSubjects((prev) =>
+                            prev.map((item) =>
+                              item.id === subject.id ? { ...item, weekly_hours: e.target.value } : item
+                            )
+                          )
+                        }
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        style={{ width: "auto", padding: "6px 10px" }}
+                        onClick={() => updateSubjectHours(subject)}
+                        disabled={subjectSavingId === subject.id}
+                      >
+                        {subjectSavingId === subject.id ? "..." : "Enregistrer"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!classSubjectsLoading && classSubjects.length === 0 && (
+                  <tr>
+                    <td colSpan="3" className="table-empty">
+                      Aucune matiere active pour cette classe.
+                    </td>
+                  </tr>
+                )}
+                {classSubjectsLoading && (
+                  <tr>
+                    <td colSpan="3" className="table-empty">
+                      Chargement...
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="table-wrap">
+            <h4>Liste des eleves</h4>
             <table>
               <thead>
                 <tr>

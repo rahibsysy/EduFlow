@@ -32,7 +32,7 @@ class SubjectService
                 $this->ensureSubjectsForClassLevel($classLevelId);
 
                 $stmt = $pdo->prepare('
-                    SELECT sub.id, sub.name, sub.code, sub.status
+                    SELECT sub.id, sub.name, sub.code, sub.status, COALESCE(scl.weekly_hours, 0) AS weekly_hours
                     FROM subjects sub
                     INNER JOIN subject_class_levels scl ON scl.subject_id = sub.id
                     WHERE scl.class_level_id = ?
@@ -44,7 +44,7 @@ class SubjectService
             }
 
             $stmt = $pdo->query('
-                SELECT id, name, code, status
+                SELECT id, name, code, status, 0 AS weekly_hours
                 FROM subjects
                 WHERE status = "ACTIVE"
                 ORDER BY sort_order ASC, name ASC
@@ -75,6 +75,67 @@ class SubjectService
         ');
         $stmt->execute([$subjectId, $classLevelId]);
         return $stmt->fetch() ?: false;
+    }
+
+    public function updateWeeklyHours(int $subjectId, int $classLevelId, int $weeklyHours): void
+    {
+        if ($subjectId <= 0 || $classLevelId <= 0 || $weeklyHours <= 0) {
+            return;
+        }
+
+        $pdo = Database::connect();
+        $this->ensureSubjectsForClassLevel($classLevelId);
+        $stmt = $pdo->prepare('
+            UPDATE subject_class_levels
+            SET weekly_hours = ?
+            WHERE subject_id = ?
+              AND class_level_id = ?
+        ');
+        $stmt->execute([min(40, $weeklyHours), $subjectId, $classLevelId]);
+    }
+
+    public function setWeeklyHours(int $subjectId, int $classLevelId, array $data): array
+    {
+        if ($subjectId <= 0 || $classLevelId <= 0) {
+            return ['error' => 'Matiere ou niveau invalide'];
+        }
+
+        $weeklyHours = isset($data['weekly_hours']) ? (int)$data['weekly_hours'] : 0;
+        if ($weeklyHours < 0 || $weeklyHours > 40) {
+            return ['error' => 'Le nombre d heures doit etre entre 0 et 40'];
+        }
+
+        $pdo = Database::connect();
+        [$role, $schoolId] = $this->authScope();
+        $classLevel = $this->findClassLevel($pdo, $classLevelId);
+        if (!$classLevel) {
+            return ['error' => 'Classe introuvable'];
+        }
+
+        if ($role !== 'super_admin' && (int)$classLevel['school_id'] !== (int)$schoolId) {
+            return ['error' => 'Forbidden'];
+        }
+
+        $this->ensureSubjectsForClassLevel($classLevelId);
+        $subject = $this->validateSubjectForClassLevel($subjectId, $classLevelId);
+        if (!$subject) {
+            return ['error' => 'Cette matiere n est pas autorisee pour ce niveau scolaire'];
+        }
+
+        $stmt = $pdo->prepare('
+            UPDATE subject_class_levels
+            SET weekly_hours = ?
+            WHERE subject_id = ?
+              AND class_level_id = ?
+        ');
+        $stmt->execute([$weeklyHours, $subjectId, $classLevelId]);
+
+        return [
+            'subject_id' => $subjectId,
+            'class_level_id' => $classLevelId,
+            'weekly_hours' => $weeklyHours,
+            'message' => 'Volume horaire enregistre avec succes',
+        ];
     }
 
     public function ensureSubjectsForClassLevel(int $classLevelId): void

@@ -15,6 +15,7 @@ const EMPTY_FORM = {
 
 const roleLabel = {
   user: "Utilisateur",
+  professeur: "Professeur",
   admin: "Admin",
   super_admin: "Super admin",
 };
@@ -199,6 +200,7 @@ export default function AdminPage() {
           {isSuperAdmin && (
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               <option value="user">Utilisateur</option>
+              <option value="professeur">Professeur</option>
               <option value="admin">Admin</option>
               <option value="super_admin">Super admin</option>
             </select>
@@ -207,6 +209,7 @@ export default function AdminPage() {
           {!isSuperAdmin && (
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               <option value="user">Utilisateur</option>
+              <option value="professeur">Professeur</option>
             </select>
           )}
 
@@ -272,13 +275,13 @@ export default function AdminPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map((item) => {
-                const canEdit = isSuperAdmin || (isAdmin && item.role === "user");
+              {users.map((item, index) => {
+                const canEdit = isSuperAdmin || (isAdmin && ["user", "professeur"].includes(item.role));
                 const canDelete = isSuperAdmin && item.id !== user?.id;
 
                 return (
                   <tr key={item.id}>
-                    <td>{item.id}</td>
+                    <td>{index + 1}</td>
                     <td>{item.first_name} {item.last_name}</td>
                     <td>{item.email}</td>
                     <td>{roleLabel[item.role] || item.role}</td>

@@ -26,8 +26,12 @@ CREATE TABLE IF NOT EXISTS users (
     last_name VARCHAR(100) NOT NULL,
     email VARCHAR(150) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
-    role ENUM('super_admin', 'admin', 'user') NOT NULL,
+    role ENUM('super_admin', 'admin', 'user', 'professeur') NOT NULL,
     status ENUM('ACTIVE', 'INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+    gender ENUM('MALE', 'FEMALE') NULL,
+    phone VARCHAR(30) NULL,
+    address VARCHAR(255) NULL,
+    primary_school VARCHAR(150) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE SET NULL
 );
@@ -45,6 +49,15 @@ CREATE TABLE IF NOT EXISTS class_levels (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY class_levels_school_name_unique (school_id, name),
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS teacher_class_levels (
+    teacher_id INT NOT NULL,
+    class_level_id INT NOT NULL,
+    PRIMARY KEY (teacher_id, class_level_id),
+    KEY teacher_class_levels_class_level_id_idx (class_level_id),
+    FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_level_id) REFERENCES class_levels(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS subjects (
@@ -74,10 +87,20 @@ ON DUPLICATE KEY UPDATE
     sort_order = VALUES(sort_order),
     status = VALUES(status);
 
+CREATE TABLE IF NOT EXISTS teacher_subjects (
+    teacher_id INT NOT NULL,
+    subject_id INT NOT NULL,
+    PRIMARY KEY (teacher_id, subject_id),
+    KEY teacher_subjects_subject_id_idx (subject_id),
+    FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS subject_class_levels (
     id INT AUTO_INCREMENT PRIMARY KEY,
     subject_id INT NOT NULL,
     class_level_id INT NULL,
+    weekly_hours TINYINT UNSIGNED NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY subject_class_levels_unique (subject_id, class_level_id),
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
@@ -219,6 +242,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     teacher_name VARCHAR(120) NULL,
     room VARCHAR(80) NULL,
     is_external TINYINT(1) NOT NULL DEFAULT 0,
+    schedule_type ENUM('eduflow_course', 'external_busy') NOT NULL DEFAULT 'eduflow_course',
     year_value INT NULL,
     week_number TINYINT NULL,
     day_of_week ENUM('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY') NOT NULL,

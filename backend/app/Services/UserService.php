@@ -58,7 +58,7 @@ class UserService
 
         if ($actorRole === 'super_admin') {
             $targetRole = (string)($data['role'] ?? 'user');
-            if (!in_array($targetRole, ['super_admin', 'admin', 'user'], true)) {
+            if (!in_array($targetRole, ['super_admin', 'admin', 'user', 'professeur'], true)) {
                 return ['error' => 'Invalid role'];
             }
 
@@ -75,8 +75,8 @@ class UserService
             }
 
             $targetRole = (string)($data['role'] ?? 'user');
-            if (!in_array($targetRole, ['user'], true)) {
-                return ['error' => 'Admin can only create user'];
+            if (!in_array($targetRole, ['user', 'professeur'], true)) {
+                return ['error' => 'Admin can only create user/professeur'];
             }
             $targetSchoolId = $actorSchoolId;
         }
@@ -143,13 +143,13 @@ class UserService
         if (isset($data['role'])) {
             $requestedRole = (string)$data['role'];
             if ($actorRole === 'super_admin') {
-                if (!in_array($requestedRole, ['super_admin', 'admin', 'user'], true)) {
+                if (!in_array($requestedRole, ['super_admin', 'admin', 'user', 'professeur'], true)) {
                     return ['error' => 'Invalid role'];
                 }
                 $role = $requestedRole;
             } else {
-                if (!in_array($requestedRole, ['user'], true)) {
-                    return ['error' => 'Admin can set only user role'];
+                if (!in_array($requestedRole, ['user', 'professeur'], true)) {
+                    return ['error' => 'Admin can set only user/professeur role'];
                 }
                 $role = $requestedRole;
             }

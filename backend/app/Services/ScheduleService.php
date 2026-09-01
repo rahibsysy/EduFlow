@@ -82,12 +82,18 @@ class ScheduleService
             SELECT
                 sc.*,
                 sub.code AS subject_code,
-                COALESCE(cl.group_name, cl.name, 'Ailleurs') AS class_level_name,
+                cl.code AS class_code,
+                cl.group_name AS class_group_name,
+                COALESCE(scl.weekly_hours, 0) AS subject_weekly_hours,
+                COALESCE(cl.name, cl.group_name, 'Ailleurs') AS class_level_name,
                 COALESCE(cl.level_name, cl.name) AS level_name,
+                u.gender AS teacher_gender,
                 s.name AS school_name
             FROM schedules sc
             LEFT JOIN subjects sub ON sub.id = sc.subject_id
             LEFT JOIN class_levels cl ON cl.id = sc.class_level_id
+            LEFT JOIN subject_class_levels scl ON scl.subject_id = sc.subject_id AND scl.class_level_id = sc.class_level_id
+            LEFT JOIN users u ON u.id = sc.teacher_id
             INNER JOIN schools s ON s.id = sc.school_id
             {$whereSql}
             ORDER BY sc.day_order ASC, sc.start_time ASC, COALESCE(cl.sort_order, 999) ASC, COALESCE(cl.name, sc.subject) ASC
@@ -95,7 +101,7 @@ class ScheduleService
 
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
-        return $stmt->fetchAll();
+        return $this->decorateSubjectSessions($stmt->fetchAll());
     }
 
     public function getById(int $scheduleId): array|false
@@ -108,10 +114,12 @@ class ScheduleService
         [$role, $schoolId] = $this->authScope();
 
         $sql = '
-            SELECT sc.*, sub.code AS subject_code, COALESCE(cl.group_name, cl.name, "Ailleurs") AS class_level_name, COALESCE(cl.level_name, cl.name) AS level_name, s.name AS school_name
+            SELECT sc.*, sub.code AS subject_code, cl.code AS class_code, cl.group_name AS class_group_name, COALESCE(scl.weekly_hours, 0) AS subject_weekly_hours, COALESCE(cl.name, cl.group_name, "Ailleurs") AS class_level_name, COALESCE(cl.level_name, cl.name) AS level_name, u.gender AS teacher_gender, s.name AS school_name
             FROM schedules sc
             LEFT JOIN subjects sub ON sub.id = sc.subject_id
             LEFT JOIN class_levels cl ON cl.id = sc.class_level_id
+            LEFT JOIN subject_class_levels scl ON scl.subject_id = sc.subject_id AND scl.class_level_id = sc.class_level_id
+            LEFT JOIN users u ON u.id = sc.teacher_id
             INNER JOIN schools s ON s.id = sc.school_id
             WHERE sc.id = ?
         ';
@@ -124,7 +132,8 @@ class ScheduleService
 
         $stmt = $pdo->prepare($sql . ' LIMIT 1');
         $stmt->execute($params);
-        return $stmt->fetch() ?: false;
+        $rows = $this->decorateSubjectSessions($stmt->fetchAll());
+        return $rows[0] ?? false;
     }
 
     public function create(array $data): array
@@ -146,6 +155,10 @@ class ScheduleService
             return $payload;
         }
 
+        if (!$isExternal && !empty($payload['weekly_hours'])) {
+            (new SubjectService())->updateWeeklyHours((int)$payload['subject_id'], (int)$payload['class_level_id'], (int)$payload['weekly_hours']);
+        }
+
         $conflict = $this->findConflict($pdo, $payload);
         if ($conflict) {
             return ['error' => 'Un autre cours existe deja pour cette classe sur ce creneau'];
@@ -159,10 +172,10 @@ class ScheduleService
         try {
             $stmt = $pdo->prepare('
                 INSERT INTO schedules (
-                    school_id, class_level_id, subject_id, subject, teacher_id, teacher_name, room, is_external, year_value, week_number, day_of_week, day_order,
+                    school_id, class_level_id, subject_id, subject, teacher_id, teacher_name, room, is_external, schedule_type, year_value, week_number, day_of_week, day_order,
                     start_time, end_time, notes, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ');
             $stmt->execute([
                 $payload['school_id'],
@@ -173,6 +186,7 @@ class ScheduleService
                 $payload['teacher_name'],
                 $payload['room'],
                 $payload['is_external'],
+                $payload['schedule_type'],
                 $payload['year_value'],
                 $payload['week_number'],
                 $payload['day_of_week'],
@@ -183,10 +197,7 @@ class ScheduleService
                 $payload['status'],
             ]);
         } catch (PDOException $e) {
-            if (($e->errorInfo[1] ?? null) === 1146) {
-                return ['error' => 'Table schedules absente. Lancez la migration 2026_08_27_create_schedules_table.sql'];
-            }
-            return ['error' => 'Schedule creation failed'];
+            return ['error' => $this->databaseErrorMessage($e)];
         }
 
         return [
@@ -225,6 +236,10 @@ class ScheduleService
         }
         $payload['id'] = $scheduleId;
 
+        if (!$isExternal && !empty($payload['weekly_hours'])) {
+            (new SubjectService())->updateWeeklyHours((int)$payload['subject_id'], (int)$payload['class_level_id'], (int)$payload['weekly_hours']);
+        }
+
         $conflict = $this->findConflict($pdo, $payload, $scheduleId);
         if ($conflict) {
             return ['error' => 'Un autre cours existe deja pour cette classe sur ce creneau'];
@@ -246,6 +261,7 @@ class ScheduleService
                     teacher_name = ?,
                     room = ?,
                     is_external = ?,
+                    schedule_type = ?,
                     year_value = ?,
                     week_number = ?,
                     day_of_week = ?,
@@ -264,6 +280,7 @@ class ScheduleService
                 $payload['teacher_name'],
                 $payload['room'],
                 $payload['is_external'],
+                $payload['schedule_type'],
                 $payload['year_value'],
                 $payload['week_number'],
                 $payload['day_of_week'],
@@ -274,8 +291,8 @@ class ScheduleService
                 $payload['status'],
                 $scheduleId,
             ]);
-        } catch (PDOException) {
-            return ['error' => 'Schedule update failed'];
+        } catch (PDOException $e) {
+            return ['error' => $this->databaseErrorMessage($e)];
         }
 
         return [
@@ -315,6 +332,7 @@ class ScheduleService
 
         $subjectId = isset($data['subject_id']) ? (int)$data['subject_id'] : 0;
         $subject = false;
+        $weeklyHours = isset($data['weekly_hours']) ? (int)$data['weekly_hours'] : 0;
         if (!$isExternal) {
             if ($classLevel === null) {
                 return ['error' => 'La classe est obligatoire'];
@@ -324,6 +342,10 @@ class ScheduleService
             if (!$subject) {
                 return ['error' => 'Cette matiere n est pas autorisee pour ce niveau scolaire'];
             }
+
+            if ($weeklyHours <= 0 || $weeklyHours > 40) {
+                return ['error' => 'Nombre d heures par semaine obligatoire pour cette matiere'];
+            }
         }
 
         $teacherId = isset($data['teacher_id']) ? (int)$data['teacher_id'] : 0;
@@ -332,6 +354,12 @@ class ScheduleService
             $teacher = $this->resolveTeacher($pdo, $teacherId, $schoolId);
             if (!$teacher) {
                 return ['error' => 'Professeur introuvable pour cette ecole'];
+            }
+            if (!$isExternal && !$this->teacherAllowsClassLevel($pdo, $teacherId, (int)$classLevel['id'])) {
+                return ['error' => 'Ce professeur n enseigne pas ce niveau'];
+            }
+            if (!$isExternal && !$this->teacherAllowsSubject($pdo, $teacherId, (int)$subject['id'])) {
+                return ['error' => 'Ce professeur n enseigne pas cette matiere'];
             }
             $teacherName = trim((string)$teacher['first_name'] . ' ' . (string)$teacher['last_name']);
         }
@@ -374,11 +402,13 @@ class ScheduleService
             'school_id' => $schoolId,
             'class_level_id' => $isExternal ? null : (int)$classLevel['id'],
             'subject_id' => $isExternal ? null : (int)$subject['id'],
+            'weekly_hours' => $isExternal ? 0 : $weeklyHours,
             'subject' => $isExternal ? 'Ailleurs' : (string)$subject['name'],
             'teacher_id' => $teacherId > 0 ? $teacherId : null,
             'teacher_name' => $teacherName,
             'room' => $this->nullable($data['room'] ?? null),
             'is_external' => $isExternal ? 1 : 0,
+            'schedule_type' => $isExternal ? 'external_busy' : 'eduflow_course',
             'year_value' => $yearValue,
             'week_number' => $weekNumber,
             'day_of_week' => $day,
@@ -454,6 +484,33 @@ class ScheduleService
         return $stmt->fetch() ?: false;
     }
 
+    private function decorateSubjectSessions(array $rows): array
+    {
+        $counters = [];
+
+        foreach ($rows as &$row) {
+            $row['subject_session_number'] = null;
+            $row['subject_weekly_hours'] = isset($row['subject_weekly_hours']) ? (int)$row['subject_weekly_hours'] : 0;
+
+            if ((int)($row['is_external'] ?? 0) === 1 || empty($row['class_level_id']) || empty($row['subject_id'])) {
+                continue;
+            }
+
+            $key = implode(':', [
+                (string)($row['school_id'] ?? ''),
+                (string)($row['class_level_id'] ?? ''),
+                (string)($row['subject_id'] ?? ''),
+                (string)($row['year_value'] ?? ''),
+                (string)($row['week_number'] ?? ''),
+            ]);
+            $counters[$key] = ($counters[$key] ?? 0) + 1;
+            $row['subject_session_number'] = $counters[$key];
+        }
+
+        unset($row);
+        return $rows;
+    }
+
     private function findTeacherConflict(PDO $pdo, array $payload, ?int $ignoreId = null): array|false
     {
         if ($payload['status'] !== 'ACTIVE' || trim((string)$payload['teacher_name']) === '') {
@@ -461,9 +518,10 @@ class ScheduleService
         }
 
         $sql = '
-            SELECT sc.id, sc.subject, sc.teacher_id, sc.teacher_name, sc.is_external, sc.notes, sc.year_value, sc.week_number, sc.day_of_week, sc.start_time, sc.end_time, COALESCE(cl.group_name, cl.name, "Ailleurs") AS class_level_name
+            SELECT sc.id, sc.subject, sc.teacher_id, sc.teacher_name, sc.is_external, sc.schedule_type, sc.notes, sc.year_value, sc.week_number, sc.day_of_week, sc.start_time, sc.end_time, u.gender AS teacher_gender, COALESCE(cl.name, cl.group_name, "Ailleurs") AS class_level_name
             FROM schedules sc
             LEFT JOIN class_levels cl ON cl.id = sc.class_level_id
+            LEFT JOIN users u ON u.id = sc.teacher_id
             WHERE sc.school_id = ?
               AND sc.year_value = ?
               AND sc.week_number = ?
@@ -503,16 +561,16 @@ class ScheduleService
     private function teacherConflictMessage(array $conflict): string
     {
         $teacher = (string)($conflict['teacher_name'] ?? 'ce professeur');
-        $start = substr((string)($conflict['start_time'] ?? ''), 0, 5);
-        $end = substr((string)($conflict['end_time'] ?? ''), 0, 5);
+        $gender = strtoupper((string)($conflict['teacher_gender'] ?? ''));
+        $displayName = $gender === 'FEMALE' ? "Mme {$teacher}" : ($gender === 'MALE' ? "M. {$teacher}" : "Ce professeur");
 
         if ((int)($conflict['is_external'] ?? 0) === 1) {
-            $note = trim((string)($conflict['notes'] ?? ''));
-            $details = $note !== '' ? " ({$note})" : " (Ailleurs)";
-            return "Le professeur {$teacher} n'est pas disponible de {$start} a {$end}{$details}.";
+            $subject = $gender === 'FEMALE' ? 'Elle' : ($gender === 'MALE' ? 'Il' : 'Il/elle');
+            $busy = $gender === 'FEMALE' ? 'occupée' : 'occupé';
+            return "{$displayName} n'est pas disponible sur ce créneau. {$subject} est {$busy} dans un autre établissement.";
         }
 
-        return "Le professeur {$teacher} n'est pas disponible de {$start} a {$end}.";
+        return "Ce professeur possède déjà un cours sur ce créneau.";
     }
 
     private function dayLabel(string $day): string
@@ -577,10 +635,57 @@ class ScheduleService
             WHERE id = ?
               AND school_id = ?
               AND status = "ACTIVE"
-              AND role = "user"
+              AND role IN ("professeur", "user")
             LIMIT 1
         ');
         $stmt->execute([$teacherId, $schoolId]);
         return $stmt->fetch() ?: false;
+    }
+
+    private function teacherAllowsClassLevel(PDO $pdo, int $teacherId, int $classLevelId): bool
+    {
+        try {
+            $total = $pdo->prepare('SELECT COUNT(*) AS total FROM teacher_class_levels WHERE teacher_id = ?');
+            $total->execute([$teacherId]);
+            if ((int)$total->fetchColumn() === 0) {
+                return false;
+            }
+
+            $stmt = $pdo->prepare('SELECT 1 FROM teacher_class_levels WHERE teacher_id = ? AND class_level_id = ? LIMIT 1');
+            $stmt->execute([$teacherId, $classLevelId]);
+            return (bool)$stmt->fetchColumn();
+        } catch (PDOException) {
+            return true;
+        }
+    }
+
+    private function teacherAllowsSubject(PDO $pdo, int $teacherId, int $subjectId): bool
+    {
+        try {
+            $total = $pdo->prepare('SELECT COUNT(*) AS total FROM teacher_subjects WHERE teacher_id = ?');
+            $total->execute([$teacherId]);
+            if ((int)$total->fetchColumn() === 0) {
+                return false;
+            }
+
+            $stmt = $pdo->prepare('SELECT 1 FROM teacher_subjects WHERE teacher_id = ? AND subject_id = ? LIMIT 1');
+            $stmt->execute([$teacherId, $subjectId]);
+            return (bool)$stmt->fetchColumn();
+        } catch (PDOException) {
+            return true;
+        }
+    }
+
+    private function databaseErrorMessage(PDOException $e): string
+    {
+        $driverCode = (int)($e->errorInfo[1] ?? 0);
+        if ($driverCode === 1146) {
+            return 'Table schedules absente. Lancez la migration 2026_08_27_create_schedules_table.sql.';
+        }
+        if ($driverCode === 1054) {
+            return 'Structure de base de données incomplète. Lancez les migrations de l emploi du temps.';
+        }
+
+        return 'Impossible d enregistrer ce créneau.';
     }
 }

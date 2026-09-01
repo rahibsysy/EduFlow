@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getClassLevels } from "../services/classLevelService";
 import { createSchedule, deleteSchedule, getSchedules, updateSchedule } from "../services/scheduleService";
 import { getCurrentSchool, getSchoolById } from "../services/schoolService";
 import { getSubjects } from "../services/subjectService";
-import { getTeachers } from "../services/teacherService";
-import { createUser } from "../services/userService";
+import { createTeacher, deleteTeacher, getTeachers, updateTeacher } from "../services/teacherService";
+import useAuth from "../hooks/useAuth";
 import { buildSchedulePdf, downloadBlob } from "../utils/schedulePdfExport";
 
 const API_URL = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
@@ -112,6 +112,7 @@ const emptyForm = {
   teacher_id: "",
   teacher_name: "",
   notes: "",
+  weekly_hours: "",
   year_value: String(currentYear),
   week_number: String(currentWeek),
   day_of_week: "MONDAY",
@@ -120,7 +121,28 @@ const emptyForm = {
   is_external: false,
 };
 
+const emptyTeacherForm = {
+  first_name: "",
+  last_name: "",
+  gender: "",
+  phone: "",
+  address: "",
+  email: "",
+  primary_school: "",
+  class_level_ids: [],
+  subject_ids: [],
+  status: "ACTIVE",
+};
+
 const formatTime = (value) => String(value || "").slice(0, 5);
+
+const timeToMinutes = (value) => {
+  const [hour = "0", minute = "0"] = formatTime(value).split(":");
+  return Number(hour) * 60 + Number(minute);
+};
+
+const timeRangesOverlap = (firstStart, firstEnd, secondStart, secondEnd) =>
+  timeToMinutes(firstStart) < timeToMinutes(secondEnd) && timeToMinutes(firstEnd) > timeToMinutes(secondStart);
 
 const addOneHour = (time) => {
   const [hour = "8", minute = "30"] = String(time || "08:30").split(":");
@@ -159,7 +181,35 @@ const scheduleSubjectCode = (schedule) =>
     ? "AILLEURS"
     : schedule.subject_code || schedule.subject_abbreviation || schedule.subject || "-";
 
+const isExternalBusy = (schedule) =>
+  schedule?.schedule_type === "external_busy" || Number(schedule?.is_external) === 1 || schedule?.is_external === true;
+
+const busyLabelForTeacher = (teacher) => (String(teacher?.gender || "").toUpperCase() === "FEMALE" ? "Occupée" : "Occupé");
+
 const subjectLabel = (subject) => subject?.code || subject?.abbreviation || subject?.name || "Matière";
+
+const scheduleSessionLabel = (schedule) => {
+  if (isExternalBusy(schedule)) {
+    return "";
+  }
+
+  const current = Number(schedule.subject_session_number || 0);
+  const total = Number(schedule.subject_weekly_hours || 0);
+  return current > 0 && total > 0 ? `${current}/${total}` : "";
+};
+
+const subjectWeeklyHours = (subject) => {
+  const value = Number(subject?.weekly_hours || 0);
+  return value > 0 ? String(value) : "";
+};
+
+const teacherSubjectCodes = (teacher, scheduleList = []) => {
+  const codes = scheduleList
+    .filter((schedule) => scheduleMatchesTeacher(schedule, teacher) && !isExternalBusy(schedule))
+    .map((schedule) => schedule.subject_code || schedule.subject_abbreviation || schedule.subject)
+    .filter(Boolean);
+  return Array.from(new Set(codes));
+};
 
 const classDisplayName = (item) => {
   if (!item) {
@@ -171,9 +221,82 @@ const classDisplayName = (item) => {
   return level && group ? `${level} - ${group}` : level || group || "Classe";
 };
 
+const teacherClassLevelIds = (teacher) =>
+  Array.isArray(teacher?.class_level_ids)
+    ? teacher.class_level_ids.map((id) => String(id))
+    : Array.isArray(teacher?.class_levels)
+      ? teacher.class_levels.map((level) => String(level.id))
+      : [];
+
+const teacherClassLabels = (teacher) => {
+  const levels = Array.isArray(teacher?.class_levels) ? teacher.class_levels : [];
+  return levels.map((level) => abbreviateClassName(level)).filter(Boolean);
+};
+
+const teacherSubjectIds = (teacher) =>
+  Array.isArray(teacher?.subject_ids)
+    ? teacher.subject_ids.map((id) => String(id))
+    : Array.isArray(teacher?.subjects)
+      ? teacher.subjects.map((subject) => String(subject.id))
+      : [];
+
+const teacherSubjectLabels = (teacher) => {
+  const subjects = Array.isArray(teacher?.subjects) ? teacher.subjects : [];
+  return subjects.map((subject) => subjectLabel(subject)).filter(Boolean);
+};
+
+const teacherTeachesClass = (teacher, classLevelId) =>
+  Boolean(classLevelId) && teacherClassLevelIds(teacher).includes(String(classLevelId));
+
+const teacherTeachesSubject = (teacher, subjectId) =>
+  Boolean(subjectId) && teacherSubjectIds(teacher).includes(String(subjectId));
+
+const abbreviateClassName = (item) => {
+  if (!item) {
+    return "Classe";
+  }
+
+  const directCode = String(item.class_code || item.code || "").trim();
+  const rawName = String(item.class_level_name || item.name || "").trim();
+  const group = String(item.class_group_name || item.group_name || "").trim();
+  const level = String(item.level_name || "").trim();
+  const usableCode = directCode && !/^\d+$/.test(directCode) ? directCode : "";
+  const normalized = (usableCode || rawName)
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/APIC/g, "AC")
+    .replace(/-/g, "");
+
+  if (/^\dAC\d?$/i.test(normalized) || /^TC\d?$/i.test(normalized) || /^\dBAC\d?$/i.test(normalized)) {
+    return normalized + (group && !normalized.endsWith(group) ? group.replace(/\s+/g, "") : "");
+  }
+
+  const normalizedLevel = level.toLowerCase();
+  const levelNumber = level.match(/\d+/)?.[0] || rawName.match(/\d+/)?.[0] || "";
+  const groupLabel = group || (/^\d+$/.test(rawName) ? rawName : "");
+  if (levelNumber && (normalizedLevel.includes("coll") || /\bac\b/i.test(level))) {
+    return `${levelNumber}AC${groupLabel}`;
+  }
+
+  if (normalizedLevel.includes("tronc") || normalizedLevel.includes("tc")) {
+    return `TC${groupLabel}`;
+  }
+
+  if (levelNumber && normalizedLevel.includes("bac")) {
+    return `${levelNumber}BAC${groupLabel}`;
+  }
+
+  return normalized && !/^\d+$/.test(normalized) ? normalized : rawName || "Classe";
+};
+
 const compactClassName = (item) => {
   if (!item) {
     return "Classe";
+  }
+
+  const abbreviated = abbreviateClassName(item);
+  if (abbreviated !== "Classe") {
+    return abbreviated;
   }
 
   const code = String(item.code || "").trim();
@@ -189,7 +312,7 @@ const compactClassName = (item) => {
 };
 
 const courseTone = (schedule) => {
-  if (Number(schedule.is_external) === 1 || schedule.is_external === true) {
+  if (isExternalBusy(schedule)) {
     return "external";
   }
 
@@ -238,15 +361,25 @@ const scheduleMatchesTeacher = (schedule, teacher) => {
   return String(schedule.teacher_name || "").trim().toLowerCase() === teacherName(teacher).trim().toLowerCase();
 };
 
+const scheduleOverlapsSlot = (schedule, day, startTime, endTime) =>
+  schedule.day_of_week === day && timeRangesOverlap(schedule.start_time, schedule.end_time, startTime, endTime);
+
 const scheduleCountLabel = (count) => `${count} ${count > 1 ? "créneaux" : "créneau"} cette semaine`;
 
 export default function SchedulesPage() {
-  const [mode, setMode] = useState("class");
+  const { user } = useAuth();
+  const canDeleteTeachers = ["super_admin", "admin"].includes(user?.role);
+  const scheduleBoardRef = useRef(null);
+  const [mode, setMode] = useState("teacher");
   const [selectedClassId, setSelectedClassId] = useState("");
   const [selectedTeacherId, setSelectedTeacherId] = useState("");
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
   const [selectedWeek, setSelectedWeek] = useState(String(currentWeek));
-  const [teacherForm, setTeacherForm] = useState({ full_name: "" });
+  const [teacherForm, setTeacherForm] = useState(emptyTeacherForm);
+  const [editingTeacherId, setEditingTeacherId] = useState(null);
+  const [teacherModalOpen, setTeacherModalOpen] = useState(false);
+  const [teacherSearch, setTeacherSearch] = useState("");
+  const [teacherSubjectFilter, setTeacherSubjectFilter] = useState("");
 
   const [classes, setClasses] = useState([]);
   const [teachers, setTeachers] = useState([]);
@@ -279,22 +412,104 @@ export default function SchedulesPage() {
     return buildTimeSlots(schedules);
   }, [schedules]);
 
-  const targetLabel = mode === "class" ? classDisplayName(selectedClass) : teacherName(selectedTeacher) || "Professeur";
+  const targetLabel = mode === "class" ? compactClassName(selectedClass) : teacherName(selectedTeacher) || "Professeur";
+  const filteredTeachers = useMemo(() => {
+    const search = teacherSearch.trim().toLowerCase();
+    return teachers.filter((teacher) => {
+      const matchesSearch =
+        !search ||
+        teacherName(teacher).toLowerCase().includes(search) ||
+        String(teacher.phone || "").toLowerCase().includes(search);
+      const matchesSubject =
+        !teacherSubjectFilter ||
+        teacherSubjectIds(teacher).includes(String(teacherSubjectFilter)) ||
+        weeklyTeacherSchedules.some(
+          (schedule) =>
+            scheduleMatchesTeacher(schedule, teacher) &&
+            !isExternalBusy(schedule) &&
+            String(schedule.subject_id || "") === teacherSubjectFilter
+        );
+      return matchesSearch && matchesSubject;
+    });
+  }, [teachers, teacherSearch, teacherSubjectFilter, weeklyTeacherSchedules]);
+  const [allSubjects, setAllSubjects] = useState([]);
+  const activeTeachers = useMemo(
+    () => teachers.filter((teacher) => String(teacher.status || "ACTIVE").toUpperCase() === "ACTIVE"),
+    [teachers]
+  );
+  const teacherAllowedClasses = useMemo(() => {
+    if (mode !== "teacher" || !selectedTeacher) {
+      return classes;
+    }
+
+    const ids = teacherClassLevelIds(selectedTeacher);
+    return ids.length ? classes.filter((item) => ids.includes(String(item.id))) : [];
+  }, [classes, mode, selectedTeacher]);
+  const filteredSubjects = useMemo(() => {
+    if (mode !== "teacher" || !selectedTeacher) {
+      return subjects;
+    }
+
+    const ids = teacherSubjectIds(selectedTeacher);
+    return ids.length ? subjects.filter((subject) => ids.includes(String(subject.id))) : [];
+  }, [mode, selectedTeacher, subjects]);
+  const courseTeacherOptions = useMemo(() => {
+    if (mode === "class") {
+      return activeTeachers.filter((teacher) => {
+        const matchesClass = !form.class_level_id || teacherTeachesClass(teacher, form.class_level_id);
+        const matchesSubject = !form.subject_id || teacherTeachesSubject(teacher, form.subject_id);
+        return matchesClass && matchesSubject;
+      });
+    }
+
+    if (!form.subject_id) {
+      return activeTeachers;
+    }
+
+    return [...activeTeachers].sort((first, second) => {
+      const firstLevelMatch = teacherClassLevelIds(first).includes(String(form.class_level_id));
+      const secondLevelMatch = teacherClassLevelIds(second).includes(String(form.class_level_id));
+      const firstSubjectMatch = teacherSubjectIds(first).includes(String(form.subject_id));
+      const secondSubjectMatch = teacherSubjectIds(second).includes(String(form.subject_id));
+      const firstHasSubject = weeklyTeacherSchedules.some(
+        (schedule) =>
+          scheduleMatchesTeacher(schedule, first) &&
+          !isExternalBusy(schedule) &&
+          String(schedule.subject_id || "") === String(form.subject_id)
+      );
+      const secondHasSubject = weeklyTeacherSchedules.some(
+        (schedule) =>
+          scheduleMatchesTeacher(schedule, second) &&
+          !isExternalBusy(schedule) &&
+          String(schedule.subject_id || "") === String(form.subject_id)
+      );
+      if (firstLevelMatch !== secondLevelMatch) {
+        return Number(secondLevelMatch) - Number(firstLevelMatch);
+      }
+      if (firstSubjectMatch !== secondSubjectMatch) {
+        return Number(secondSubjectMatch) - Number(firstSubjectMatch);
+      }
+      return Number(secondHasSubject) - Number(firstHasSubject);
+    });
+  }, [activeTeachers, form.class_level_id, form.subject_id, weeklyTeacherSchedules]);
 
   const loadReferenceData = async () => {
     setLoading(true);
     setError("");
     try {
-      const [classData, teacherData, schoolData] = await Promise.all([
+      const [classData, teacherData, allSubjectData, schoolData] = await Promise.all([
         getClassLevels(),
         getTeachers(),
+        getSubjects(),
         getCurrentSchool().catch(() => null),
       ]);
       const safeClasses = Array.isArray(classData) ? classData : [];
       const safeTeachers = Array.isArray(teacherData) ? teacherData : [];
+      const safeSubjects = Array.isArray(allSubjectData) ? allSubjectData : [];
 
       setClasses(safeClasses);
       setTeachers(safeTeachers);
+      setAllSubjects(safeSubjects);
       if (schoolData) {
         setSchool(schoolData);
       }
@@ -310,6 +525,8 @@ export default function SchedulesPage() {
   const teacherScheduleQuery = (teacher, teacherId = teacher?.id) => ({
     teacher_id: teacherId,
     teacher_name: teacher ? teacherName(teacher) : undefined,
+    year_value: selectedYear,
+    week_number: selectedWeek,
     status: "ACTIVE",
   });
 
@@ -345,6 +562,8 @@ export default function SchedulesPage() {
     try {
       const data = await getSchedules({
         status: "ACTIVE",
+        year_value: selectedYear,
+        week_number: selectedWeek,
       });
       setWeeklyTeacherSchedules(Array.isArray(data) ? data : []);
     } catch {
@@ -363,12 +582,21 @@ export default function SchedulesPage() {
       const data = await getSubjects({ class_level_id: classLevelId });
       const safeSubjects = Array.isArray(data) ? data : [];
       setSubjects(safeSubjects);
-      const fallbackSubjectId = safeSubjects[0]?.id ? String(safeSubjects[0].id) : "";
+      const allowedSubjectIds =
+        mode === "teacher" && selectedTeacher ? teacherSubjectIds(selectedTeacher) : [];
+      const availableSubjects = allowedSubjectIds.length
+        ? safeSubjects.filter((subject) => allowedSubjectIds.includes(String(subject.id)))
+        : safeSubjects;
+      const fallbackSubjectId = availableSubjects[0]?.id ? String(availableSubjects[0].id) : "";
+      const nextSubject =
+        availableSubjects.find((subject) => String(subject.id) === String(selectedSubjectId)) ||
+        availableSubjects[0];
       setForm((prev) => ({
         ...prev,
-        subject_id: safeSubjects.some((subject) => String(subject.id) === String(selectedSubjectId))
+        subject_id: availableSubjects.some((subject) => String(subject.id) === String(selectedSubjectId))
           ? String(selectedSubjectId)
           : fallbackSubjectId,
+        weekly_hours: subjectWeeklyHours(nextSubject),
       }));
     } catch (err) {
       setError(err?.response?.data?.message || "Impossible de charger les matières de cette classe.");
@@ -400,6 +628,41 @@ export default function SchedulesPage() {
     });
   };
 
+  const closeTeacherModal = () => {
+    setTeacherModalOpen(false);
+    setEditingTeacherId(null);
+    setTeacherForm({
+      ...emptyTeacherForm,
+      primary_school: school?.name || "",
+    });
+  };
+
+  const openTeacherModal = (teacher = null) => {
+    setMessage("");
+    setError("");
+    setEditingTeacherId(teacher?.id || null);
+    setTeacherForm(
+      teacher
+        ? {
+            first_name: teacher.first_name || "",
+            last_name: teacher.last_name || "",
+            gender: teacher.gender || "",
+            phone: teacher.phone || "",
+            address: teacher.address || "",
+            email: teacher.email || "",
+            primary_school: teacher.primary_school || school?.name || "",
+            class_level_ids: teacherClassLevelIds(teacher),
+            subject_ids: teacherSubjectIds(teacher),
+            status: teacher.status || "ACTIVE",
+          }
+        : {
+            ...emptyTeacherForm,
+            primary_school: school?.name || "",
+          }
+    );
+    setTeacherModalOpen(true);
+  };
+
   const closePdfPreview = () => {
     if (pdfPreview.url) {
       URL.revokeObjectURL(pdfPreview.url);
@@ -427,7 +690,13 @@ export default function SchedulesPage() {
     setEditingId(null);
     setForm(nextForm);
     setModalOpen(true);
-    if (nextForm.class_level_id) {
+    if (mode === "teacher" && !nextForm.class_level_id && selectedTeacher) {
+      const firstAllowedClassId = teacherClassLevelIds(selectedTeacher)[0] || "";
+      if (firstAllowedClassId) {
+        setForm((prev) => ({ ...prev, class_level_id: String(firstAllowedClassId) }));
+        loadSubjectsForClass(firstAllowedClassId);
+      }
+    } else if (nextForm.class_level_id) {
       loadSubjectsForClass(nextForm.class_level_id);
     }
   };
@@ -443,6 +712,7 @@ export default function SchedulesPage() {
       teacher_id: String(scheduleTeacherId),
       teacher_name: schedule.teacher_name || "",
       notes: schedule.notes || "",
+      weekly_hours: schedule.subject_weekly_hours ? String(schedule.subject_weekly_hours) : "",
       year_value: String(schedule.year_value || selectedYear),
       week_number: String(schedule.week_number || selectedWeek),
       day_of_week: schedule.day_of_week || "MONDAY",
@@ -466,34 +736,90 @@ export default function SchedulesPage() {
     setMessage("");
     setError("");
 
-    const fullName = teacherForm.full_name.trim().replace(/\s+/g, " ");
-    if (!fullName) {
-      setError("Renseignez le nom du professeur.");
+    if (!teacherForm.gender) {
+      setError("Sélectionnez le sexe du professeur.");
       return;
     }
 
-    const nameParts = fullName.split(" ");
-    const firstName = nameParts.shift() || fullName;
-    const lastName = nameParts.join(" ") || "-";
-
     try {
-      const created = await createUser({
-        first_name: firstName,
-        last_name: lastName,
-        email_local_part: `${firstName}.${lastName}`,
-        password: "EduFlow@123",
-        role: "user",
-        status: "ACTIVE",
-      });
+      const payload = {
+        ...teacherForm,
+        class_level_ids: teacherForm.class_level_ids.map((id) => Number(id)),
+        subject_ids: teacherForm.subject_ids.map((id) => Number(id)),
+        school_id: school?.id || undefined,
+      };
+      const saved = editingTeacherId ? await updateTeacher(editingTeacherId, payload) : await createTeacher(payload);
       const teacherData = await getTeachers();
       const safeTeachers = Array.isArray(teacherData) ? teacherData : [];
       setTeachers(safeTeachers);
-      setSelectedTeacherId(String(created.id || safeTeachers.find((teacher) => teacherName(teacher) === `${firstName} ${lastName}`)?.id || selectedTeacherId));
-      setTeacherForm({ full_name: "" });
-      setMessage("Professeur ajouté avec succès.");
+      setSelectedTeacherId(String(saved.id || selectedTeacherId));
+      closeTeacherModal();
+      setMode("teacher");
+      setMessage(editingTeacherId ? "Professeur modifié avec succès." : "Professeur ajouté avec succès.");
     } catch (err) {
-      setError(err?.response?.data?.message || "Impossible d'ajouter ce professeur.");
+      if (import.meta.env.DEV) {
+        console.error("Erreur création/modification professeur", {
+          status: err?.response?.status,
+          data: err?.response?.data,
+          payload: teacherForm,
+        });
+      }
+      setError(err?.response?.data?.message || "Impossible de créer ou modifier ce professeur.");
     }
+  };
+
+  const removeTeacher = async (teacher) => {
+    if (!teacher?.id || !window.confirm("Supprimer ce professeur ?")) {
+      return;
+    }
+
+    setMessage("");
+    setError("");
+    try {
+      await deleteTeacher(teacher.id);
+      const teacherData = await getTeachers();
+      const safeTeachers = Array.isArray(teacherData) ? teacherData : [];
+      setTeachers(safeTeachers);
+      if (String(selectedTeacherId) === String(teacher.id)) {
+        setSelectedTeacherId(String(safeTeachers[0]?.id || ""));
+      }
+      setMessage("Professeur supprimé avec succès.");
+    } catch (err) {
+      setError(err?.response?.data?.message || "Suppression non autorisée pour ce professeur.");
+    }
+  };
+
+  const findTeacherAvailabilityConflict = (teacher, day, startTime, endTime, ignoreId = null) => {
+    if (!teacher) {
+      return null;
+    }
+
+    const knownSchedules = uniqueSchedules(schedules, weeklyTeacherSchedules);
+    return (
+      knownSchedules.find((schedule) => {
+        if (ignoreId && String(schedule.id) === String(ignoreId)) {
+          return false;
+        }
+
+        return scheduleMatchesTeacher(schedule, teacher) && scheduleOverlapsSlot(schedule, day, startTime, endTime);
+      }) || null
+    );
+  };
+
+  const teacherAvailabilityMessage = (teacher, conflict) => {
+    if (!conflict) {
+      return "";
+    }
+
+    if (isExternalBusy(conflict)) {
+      const isFemale = String(teacher?.gender || conflict.teacher_gender || "").toUpperCase() === "FEMALE";
+      const prefix = isFemale ? "Mme" : "M.";
+      const pronoun = isFemale ? "Elle" : "Il";
+      const busy = isFemale ? "occupée" : "occupé";
+      return `${prefix} ${teacherName(teacher)} n'est pas disponible sur ce créneau. ${pronoun} est ${busy} dans un autre établissement.`;
+    }
+
+    return "Ce professeur possède déjà un cours sur ce créneau.";
   };
 
   const submitSchedule = async (e) => {
@@ -510,17 +836,32 @@ export default function SchedulesPage() {
       return;
     }
 
+    const availabilityConflict = findTeacherAvailabilityConflict(
+      effectiveTeacher,
+      form.day_of_week,
+      form.start_time,
+      form.end_time,
+      editingId
+    );
+    if (availabilityConflict) {
+      setError(teacherAvailabilityMessage(effectiveTeacher, availabilityConflict));
+      return;
+    }
+
     const payload = {
       class_level_id: isExternal ? undefined : Number(form.class_level_id),
       subject_id: isExternal ? undefined : Number(form.subject_id),
+      weekly_hours: isExternal ? undefined : Number(form.weekly_hours),
       teacher_id: Number(effectiveTeacher.id),
       teacher_name: teacherName(effectiveTeacher),
+      school_id: isExternal ? effectiveTeacher.school_id || school?.id || undefined : undefined,
       year_value: Number(form.year_value),
       week_number: Number(form.week_number),
       day_of_week: form.day_of_week,
       start_time: form.start_time,
       end_time: form.end_time,
       is_external: isExternal,
+      schedule_type: isExternal ? "external_busy" : "eduflow_course",
       notes: isExternal ? form.notes.trim() : "",
     };
 
@@ -575,6 +916,9 @@ export default function SchedulesPage() {
         ...teacherScheduleQuery(teacher, nextTeacherId),
       });
       setSchedules(Array.isArray(data) ? data : []);
+      requestAnimationFrame(() => {
+        scheduleBoardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } catch (err) {
       setSchedules([]);
       setError(err?.response?.data?.message || "Impossible de charger l'emploi du temps de ce professeur.");
@@ -686,11 +1030,12 @@ export default function SchedulesPage() {
     }
   };
 
-  const teacherCourseCount = (teacher) => weeklyTeacherSchedules.filter((schedule) => scheduleMatchesTeacher(schedule, teacher)).length;
+  const teacherCourseCount = (teacher) =>
+    weeklyTeacherSchedules.filter((schedule) => scheduleMatchesTeacher(schedule, teacher) && !isExternalBusy(schedule)).length;
 
   return (
     <div className="admin-grid">
-      <section className="panel schedule-board-panel">
+      <section className="panel schedule-board-panel" ref={scheduleBoardRef}>
         <div className="schedule-board-header">
           <div>
             <p className="brand-kicker">Emploi du temps</p>
@@ -798,8 +1143,9 @@ export default function SchedulesPage() {
                 <tr key={slot.start} className={slot.pause ? "schedule-pause-row" : ""}>
                   <th>{slot.label}</th>
                   {dayOptions.map((day) => {
+                    const slotEnd = slot.end || addOneHour(slot.start);
                     const items = schedules.filter(
-                      (schedule) => schedule.day_of_week === day.value && formatTime(schedule.start_time) === slot.start
+                      (schedule) => scheduleOverlapsSlot(schedule, day.value, slot.start, slotEnd)
                     );
 
                     return (
@@ -814,20 +1160,32 @@ export default function SchedulesPage() {
                               onClick={() => openEditModal(schedule)}
                               title="Modifier ce créneau"
                             >
-                              <strong>{scheduleSubjectCode(schedule)}</strong>
+                              <strong>{isExternalBusy(schedule) ? busyLabelForTeacher(selectedTeacher) : scheduleSubjectCode(schedule)}</strong>
+                              {scheduleSessionLabel(schedule) && <em>{scheduleSessionLabel(schedule)}</em>}
                               <span>
-                                {Number(schedule.is_external) === 1 || schedule.is_external === true
+                                {isExternalBusy(schedule)
                                   ? schedule.notes || "Autre établissement"
                                   : mode === "class"
                                     ? schedule.teacher_name
-                                    : schedule.class_level_name}
+                                    : abbreviateClassName(schedule)}
                               </span>
                               <small>
                                 {formatTime(schedule.start_time)} - {formatTime(schedule.end_time)}
                               </small>
                             </button>
                           ))}
-                          {!slot.pause && (
+                          {!slot.pause && mode === "teacher" && items.length === 0 && (
+                            <button
+                              type="button"
+                              className="schedule-empty-cell"
+                              onClick={() => openCreateModal(day.value, slot)}
+                              title="Ajouter un créneau"
+                              disabled={!selectedTeacherId}
+                            >
+                              Ajouter
+                            </button>
+                          )}
+                          {!slot.pause && mode === "class" && (
                             <button
                               type="button"
                               className={items.length ? "schedule-add-mini" : "schedule-empty-cell"}
@@ -848,53 +1206,237 @@ export default function SchedulesPage() {
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panel-header compact-header">
-          <div>
-            <h3>EDT des enseignants de l'école</h3>
-            <p className="muted">
-              {academicWeekLabel(selectedYear, selectedWeek)} | Les mêmes créneaux alimentent la vue classe et la vue professeur.
-            </p>
+      {mode === "teacher" && (
+        <section className="panel">
+          <div className="panel-header compact-header">
+            <div>
+              <h3>Professeurs</h3>
+              <p className="muted">
+                {academicWeekLabel(selectedYear, selectedWeek)} | Les compteurs excluent les créneaux occupés ailleurs.
+              </p>
+            </div>
+            <button type="button" className="schedule-add-teacher-btn" onClick={() => openTeacherModal()}>
+              + Ajouter un professeur
+            </button>
           </div>
-        </div>
-        <form className="schedule-teacher-form" onSubmit={submitTeacher}>
-          <label>
-            <span>Nom du professeur</span>
-            <input
-              placeholder="Ex: Ahmed Benali"
-              value={teacherForm.full_name}
-              onChange={(e) => setTeacherForm({ full_name: e.target.value })}
-              required
-            />
-          </label>
-          <button type="submit">Ajouter professeur</button>
-        </form>
-        <div className="teacher-schedule-grid">
-          {teachers.map((teacher) => (
-            <article key={teacher.id} className="teacher-schedule-card">
+
+          <div className="schedule-teacher-filters">
+            <label>
+              <span>Recherche professeur</span>
+              <input
+                placeholder="Nom, prénom ou téléphone"
+                value={teacherSearch}
+                onChange={(e) => setTeacherSearch(e.target.value)}
+              />
+            </label>
+            <label>
+              <span>Matière</span>
+              <select value={teacherSubjectFilter} onChange={(e) => setTeacherSubjectFilter(e.target.value)}>
+                <option value="">Toutes les matières</option>
+                {allSubjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subjectLabel(subject)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="teacher-schedule-grid">
+            {filteredTeachers.map((teacher) => (
+              <article
+                key={teacher.id}
+                className={`teacher-schedule-card ${String(selectedTeacherId) === String(teacher.id) ? "teacher-schedule-card-active" : ""}`}
+              >
+                <div>
+                  <p className="kpi-label">{teacherName(teacher)}</p>
+                  <p className="muted">Matières : {teacherSubjectLabels(teacher).join(", ") || teacherSubjectCodes(teacher, weeklyTeacherSchedules).join(", ") || "-"}</p>
+                  <p className="muted">Niveaux : {teacherClassLabels(teacher).join(", ") || "-"}</p>
+                  <p className="muted">Téléphone : {teacher.phone || "-"}</p>
+                  <p className="teacher-slot-count">{scheduleCountLabel(teacherCourseCount(teacher))}</p>
+                </div>
+                <div className="teacher-card-actions">
+                  <button type="button" className="secondary-btn" onClick={() => viewTeacherSchedule(teacher)}>
+                    Voir l'EDT
+                  </button>
+                  <button type="button" className="secondary-btn" onClick={() => openTeacherModal(teacher)}>
+                    Modifier
+                  </button>
+                  <button type="button" className="secondary-btn" onClick={() => downloadWeeklyPdf("teacher", teacher)} disabled={pdfLoading}>
+                    PDF
+                  </button>
+                  {canDeleteTeachers && (
+                    <button type="button" className="danger-btn" onClick={() => removeTeacher(teacher)}>
+                      Supprimer
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+            {filteredTeachers.length === 0 && (
+              <p className="muted">Aucun professeur ne correspond à ces critères.</p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {teacherModalOpen && (
+        <div className="schedule-modal-backdrop" role="presentation">
+          <section className="schedule-modal" aria-modal="true" role="dialog">
+            <div className="schedule-modal-header">
               <div>
-                <p className="kpi-label">{teacherName(teacher)}</p>
-                <p className="muted">{scheduleCountLabel(teacherCourseCount(teacher))}</p>
+                <p className="brand-kicker">{editingTeacherId ? "Modifier" : "Ajouter"}</p>
+                <h3>{editingTeacherId ? "Modifier le professeur" : "Nouveau professeur"}</h3>
               </div>
-              <div className="teacher-card-actions">
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() => viewTeacherSchedule(teacher)}
+              <button type="button" className="secondary-btn modal-close-btn" onClick={closeTeacherModal}>
+                Fermer
+              </button>
+            </div>
+
+            <form className="form-grid schedule-modal-form" onSubmit={submitTeacher}>
+              <label>
+                <span>Nom</span>
+                <input
+                  value={teacherForm.last_name}
+                  onChange={(e) => setTeacherForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                  required
+                />
+              </label>
+              <label>
+                <span>Prénom</span>
+                <input
+                  value={teacherForm.first_name}
+                  onChange={(e) => setTeacherForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                  required
+                />
+              </label>
+              <label>
+                <span>Statut</span>
+                <select
+                  value={teacherForm.status}
+                  onChange={(e) => setTeacherForm((prev) => ({ ...prev, status: e.target.value }))}
                 >
-                  Voir EDT
-                </button>
-                <button type="button" className="secondary-btn" onClick={() => downloadWeeklyPdf("teacher", teacher)} disabled={pdfLoading}>
-                  Télécharger PDF
-                </button>
+                  <option value="ACTIVE">Actif</option>
+                  <option value="INACTIVE">Inactif</option>
+                </select>
+              </label>
+
+              <fieldset className="schedule-radio-group full-field">
+                <legend>Sexe</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="teacher-gender"
+                    value="MALE"
+                    checked={teacherForm.gender === "MALE"}
+                    onChange={(e) => setTeacherForm((prev) => ({ ...prev, gender: e.target.value }))}
+                    required
+                  />
+                  <span>Homme</span>
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="teacher-gender"
+                    value="FEMALE"
+                    checked={teacherForm.gender === "FEMALE"}
+                    onChange={(e) => setTeacherForm((prev) => ({ ...prev, gender: e.target.value }))}
+                    required
+                  />
+                  <span>Femme</span>
+                </label>
+              </fieldset>
+
+              <label>
+                <span>Téléphone</span>
+                <input
+                  value={teacherForm.phone}
+                  onChange={(e) => setTeacherForm((prev) => ({ ...prev, phone: e.target.value }))}
+                  required
+                />
+              </label>
+              <label>
+                <span>Email facultatif</span>
+                <input
+                  type="email"
+                  value={teacherForm.email}
+                  onChange={(e) => setTeacherForm((prev) => ({ ...prev, email: e.target.value }))}
+                />
+              </label>
+              <label className="full-field">
+                <span>Adresse</span>
+                <input
+                  value={teacherForm.address}
+                  onChange={(e) => setTeacherForm((prev) => ({ ...prev, address: e.target.value }))}
+                  required
+                />
+              </label>
+              <label className="full-field">
+                <span>Établissement principal</span>
+                <input
+                  value={teacherForm.primary_school}
+                  onChange={(e) => setTeacherForm((prev) => ({ ...prev, primary_school: e.target.value }))}
+                  required
+                />
+              </label>
+
+              <fieldset className="teacher-level-picker full-field">
+                <legend>Niveaux enseignés</legend>
+                {classes.map((item) => {
+                  const id = String(item.id);
+                  return (
+                    <label key={item.id}>
+                      <input
+                        type="checkbox"
+                        checked={teacherForm.class_level_ids.includes(id)}
+                        onChange={(e) =>
+                          setTeacherForm((prev) => ({
+                            ...prev,
+                            class_level_ids: e.target.checked
+                              ? [...prev.class_level_ids, id]
+                              : prev.class_level_ids.filter((classLevelId) => classLevelId !== id),
+                          }))
+                        }
+                      />
+                      <span>{abbreviateClassName(item)}</span>
+                    </label>
+                  );
+                })}
+                {classes.length === 0 && <p className="muted">Aucune classe disponible.</p>}
+              </fieldset>
+
+              <fieldset className="teacher-level-picker full-field">
+                <legend>Matières enseignées</legend>
+                {allSubjects.map((subject) => {
+                  const id = String(subject.id);
+                  return (
+                    <label key={subject.id}>
+                      <input
+                        type="checkbox"
+                        checked={teacherForm.subject_ids.includes(id)}
+                        onChange={(e) =>
+                          setTeacherForm((prev) => ({
+                            ...prev,
+                            subject_ids: e.target.checked
+                              ? [...prev.subject_ids, id]
+                              : prev.subject_ids.filter((subjectId) => subjectId !== id),
+                          }))
+                        }
+                      />
+                      <span>{subjectLabel(subject)}</span>
+                    </label>
+                  );
+                })}
+                {allSubjects.length === 0 && <p className="muted">Aucune matière disponible.</p>}
+              </fieldset>
+
+              <div className="form-actions full-field">
+                <button type="submit">{editingTeacherId ? "Enregistrer" : "Ajouter le professeur"}</button>
               </div>
-            </article>
-          ))}
-          {teachers.length === 0 && (
-            <p className="muted">Aucun professeur enregistré pour cette école.</p>
-          )}
+            </form>
+          </section>
         </div>
-      </section>
+      )}
 
       {modalOpen && (
         <div className="schedule-modal-backdrop" role="presentation">
@@ -922,6 +1464,7 @@ export default function SchedulesPage() {
                         is_external: isExternal,
                         class_level_id: isExternal ? "" : prev.class_level_id,
                         subject_id: isExternal ? "" : prev.subject_id,
+                        weekly_hours: isExternal ? "" : prev.weekly_hours,
                       }));
                       if (!isExternal && form.class_level_id) {
                         loadSubjectsForClass(form.class_level_id, form.subject_id);
@@ -941,13 +1484,13 @@ export default function SchedulesPage() {
                     value={form.class_level_id}
                     onChange={(e) => {
                       const classLevelId = e.target.value;
-                      setForm((prev) => ({ ...prev, class_level_id: classLevelId, subject_id: "" }));
+                      setForm((prev) => ({ ...prev, class_level_id: classLevelId, subject_id: "", weekly_hours: "" }));
                       loadSubjectsForClass(classLevelId);
                     }}
                     required
                   >
                     <option value="">Choisir une classe</option>
-                    {classes.map((item) => (
+                    {teacherAllowedClasses.map((item) => (
                       <option key={item.id} value={item.id}>
                         {classDisplayName(item)}
                       </option>
@@ -956,24 +1499,55 @@ export default function SchedulesPage() {
                 </label>
               )}
 
+              {mode === "teacher" && !form.is_external && teacherAllowedClasses.length === 0 && (
+                <p className="error-text full-field">Ajoutez d'abord les niveaux enseignés dans la fiche du professeur.</p>
+              )}
+
               {!form.is_external && (
                 <label>
                   <span>Matière</span>
                   <select
                     value={form.subject_id}
-                    onChange={(e) => setForm((prev) => ({ ...prev, subject_id: e.target.value }))}
+                    onChange={(e) => {
+                      const subject = filteredSubjects.find((item) => String(item.id) === String(e.target.value));
+                      setForm((prev) => ({
+                        ...prev,
+                        subject_id: e.target.value,
+                        weekly_hours: subjectWeeklyHours(subject),
+                        teacher_id: mode === "class" ? "" : prev.teacher_id,
+                        teacher_name: mode === "class" ? "" : prev.teacher_name,
+                      }));
+                    }}
                     required
-                    disabled={!form.class_level_id || subjectsLoading}
+                    disabled={!form.class_level_id || subjectsLoading || filteredSubjects.length === 0}
                   >
                     <option value="">
                       {subjectsLoading ? "Chargement des matières..." : "Sélectionner une matière"}
                     </option>
-                    {subjects.map((subject) => (
+                    {filteredSubjects.map((subject) => (
                       <option key={subject.id} value={subject.id}>
                         {subjectLabel(subject)}
                       </option>
                     ))}
                   </select>
+                </label>
+              )}
+
+              {mode === "teacher" && !form.is_external && form.class_level_id && !subjectsLoading && filteredSubjects.length === 0 && (
+                <p className="error-text full-field">Ajoutez d'abord les matières enseignées dans la fiche du professeur.</p>
+              )}
+
+              {!form.is_external && (
+                <label>
+                  <span>Heures par semaine</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="40"
+                    value={form.weekly_hours}
+                    onChange={(e) => setForm((prev) => ({ ...prev, weekly_hours: e.target.value }))}
+                    required
+                  />
                 </label>
               )}
 
@@ -990,13 +1564,19 @@ export default function SchedulesPage() {
                     required
                   >
                     <option value="">Sélectionner un professeur</option>
-                    {teachers.map((teacher) => (
+                    {courseTeacherOptions.map((teacher) => (
                       <option key={teacher.id} value={teacher.id}>
                         {teacherName(teacher)}
                       </option>
                     ))}
                   </select>
                 </label>
+              )}
+
+              {mode === "class" && !form.is_external && form.subject_id && courseTeacherOptions.length === 0 && (
+                <p className="error-text full-field">
+                  Aucun professeur n'enseigne cette matière pour cette classe.
+                </p>
               )}
 
               {form.is_external && (

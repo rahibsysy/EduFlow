@@ -38,7 +38,11 @@ Router::add('PUT', '/api/class-levels/{id}', [new ClassLevelController(), 'updat
 Router::add('DELETE', '/api/class-levels/{id}', [new ClassLevelController(), 'delete'], [AuthMiddleware::class]);
 
 Router::add('GET', '/api/subjects', [new SubjectController(), 'index'], [AuthMiddleware::class]);
+Router::add('PUT', '/api/subjects/{id}/class-levels/{classLevelId}', [new SubjectController(), 'updateClassLevelHours'], [AuthMiddleware::class]);
 Router::add('GET', '/api/teachers', [new TeacherController(), 'index'], [AuthMiddleware::class]);
+Router::add('POST', '/api/teachers', [new TeacherController(), 'store'], [AuthMiddleware::class, new RoleMiddleware(['super_admin', 'admin'])]);
+Router::add('PUT', '/api/teachers/{id}', [new TeacherController(), 'update'], [AuthMiddleware::class, new RoleMiddleware(['super_admin', 'admin'])]);
+Router::add('DELETE', '/api/teachers/{id}', [new TeacherController(), 'delete'], [AuthMiddleware::class, new RoleMiddleware(['super_admin', 'admin'])]);
 
 Router::add('GET', '/api/schedules', [new ScheduleController(), 'index'], [AuthMiddleware::class]);
 Router::add('POST', '/api/schedules', [new ScheduleController(), 'store'], [AuthMiddleware::class]);

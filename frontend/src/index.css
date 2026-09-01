@@ -180,6 +180,17 @@ button:disabled {
   background: #fff;
 }
 
+.teacher-schedule-card-active {
+  border-color: #15957d;
+  box-shadow: 0 0 0 3px rgba(21, 149, 125, 0.12);
+}
+
+.teacher-slot-count {
+  margin-top: 10px;
+  color: #10203a;
+  font-weight: 900;
+}
+
 .text-link {
   width: fit-content;
   color: var(--primary);
@@ -616,7 +627,7 @@ th {
 
 .schedule-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1.4fr) minmax(170px, 0.8fr) minmax(230px, 1fr) minmax(140px, auto);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -726,6 +737,18 @@ th {
   line-height: 1;
 }
 
+.schedule-course em {
+  justify-self: start;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #1f3b6d;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .schedule-course span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -770,8 +793,8 @@ th {
 }
 
 .schedule-course-external {
-  border-color: #c4b5fd;
-  background: repeating-linear-gradient(135deg, #f5f3ff, #f5f3ff 8px, #ede9fe 8px, #ede9fe 16px);
+  border-color: #fed7aa;
+  background: repeating-linear-gradient(135deg, #fff7ed, #fff7ed 8px, #ffedd5 8px, #ffedd5 16px);
 }
 
 .schedule-empty-cell,
@@ -798,6 +821,11 @@ th {
   gap: 8px;
 }
 
+.schedule-add-teacher-btn {
+  width: auto;
+  min-width: 190px;
+}
+
 .compact-header {
   margin-bottom: 8px;
 }
@@ -821,6 +849,84 @@ th {
   color: #43618f;
   font-size: 13px;
   font-weight: 800;
+}
+
+.schedule-teacher-filters {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.schedule-teacher-filters label {
+  display: grid;
+  gap: 6px;
+}
+
+.schedule-teacher-filters span,
+.schedule-radio-group legend {
+  color: #43618f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.schedule-radio-group {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.schedule-radio-group label {
+  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #d4e2f8;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.schedule-radio-group input {
+  width: auto;
+  padding: 0;
+}
+
+.teacher-level-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.teacher-level-picker legend {
+  color: #43618f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.teacher-level-picker label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid #d4e2f8;
+  border-radius: 8px;
+  background: #f8fbff;
+  font-weight: 900;
+}
+
+.teacher-level-picker input {
+  width: auto;
+  padding: 0;
 }
 
 .schedule-modal-backdrop {
@@ -924,11 +1030,13 @@ th {
   .schedule-toolbar,
   .schedule-teacher-picker,
   .schedule-teacher-form,
+  .schedule-teacher-filters,
   .schedule-modal-form {
     grid-template-columns: 1fr;
   }
 
-  .modal-close-btn {
+  .modal-close-btn,
+  .schedule-add-teacher-btn {
     width: 100%;
   }
 }

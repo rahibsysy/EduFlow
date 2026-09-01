@@ -63,9 +63,58 @@ const isExternalSchedule = (schedule) => Number(schedule?.is_external) === 1 || 
 const scheduleSubjectCode = (schedule) =>
   isExternalSchedule(schedule) ? "AILLEURS" : schedule?.subject_code || schedule?.subject_abbreviation || schedule?.subject || "";
 
+const scheduleSessionLabel = (schedule) => {
+  if (isExternalSchedule(schedule)) {
+    return "";
+  }
+
+  const current = Number(schedule?.subject_session_number || 0);
+  const total = Number(schedule?.subject_weekly_hours || 0);
+  return current > 0 && total > 0 ? `${current}/${total}` : "";
+};
+
+const abbreviateClassName = (schedule) => {
+  const directCode = String(schedule?.class_code || schedule?.code || "").trim();
+  const rawName = String(schedule?.class_level_name || schedule?.name || "").trim();
+  const group = String(schedule?.class_group_name || schedule?.group_name || "").trim();
+  const level = String(schedule?.level_name || "").trim();
+  const usableCode = directCode && !/^\d+$/.test(directCode) ? directCode : "";
+  const normalized = (usableCode || rawName)
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/APIC/g, "AC")
+    .replace(/-/g, "");
+
+  if (/^\dAC\d?$/i.test(normalized) || /^TC\d?$/i.test(normalized) || /^\dBAC\d?$/i.test(normalized)) {
+    return normalized + (group && !normalized.endsWith(group) ? group.replace(/\s+/g, "") : "");
+  }
+
+  const normalizedLevel = level.toLowerCase();
+  const levelNumber = level.match(/\d+/)?.[0] || rawName.match(/\d+/)?.[0] || "";
+  const groupLabel = group || (/^\d+$/.test(rawName) ? rawName : "");
+  if (levelNumber && (normalizedLevel.includes("coll") || /\bac\b/i.test(level))) {
+    return `${levelNumber}AC${groupLabel}`;
+  }
+
+  if (normalizedLevel.includes("tronc") || normalizedLevel.includes("tc")) {
+    return `TC${groupLabel}`;
+  }
+
+  if (levelNumber && normalizedLevel.includes("bac")) {
+    return `${levelNumber}BAC${groupLabel}`;
+  }
+
+  return normalized && !/^\d+$/.test(normalized) ? normalized : rawName || "";
+};
+
 const compactClassName = (schedule) => {
   if (!schedule || isExternalSchedule(schedule)) {
     return "Autre établissement";
+  }
+
+  const abbreviated = abbreviateClassName(schedule);
+  if (abbreviated) {
+    return abbreviated;
   }
 
   const level = String(schedule.level_name || "").trim();
@@ -317,20 +366,21 @@ const drawScheduleGrid = ({ ctx, schedules, days, timeSlots, mode }) => {
         ctx.stroke();
 
         ctx.fillStyle = color.text;
+        const sessionLabel = scheduleSessionLabel(schedule);
+        const title = sessionLabel ? `${code} ${sessionLabel}` : code;
         if (mode === "teacher") {
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.font = `800 ${isExternalSchedule(schedule) ? 7.5 : 9}px Arial, sans-serif`;
-          ctx.fillText(code, courseX + courseW / 2, courseY + courseH / 2 - 4);
+          ctx.font = `800 ${isExternalSchedule(schedule) ? 8 : 9}px Arial, sans-serif`;
+          ctx.fillText(title, courseX + courseW / 2, courseY + courseH / 2 - (isExternalSchedule(schedule) ? 0 : 4));
+          if (isExternalSchedule(schedule)) {
+            return;
+          }
           ctx.font = "700 6.2px Arial, sans-serif";
           ctx.fillStyle = palette.muted;
-          ctx.fillText(
-            isExternalSchedule(schedule) ? schedule.notes || "Autre établissement" : compactClassName(schedule),
-            courseX + courseW / 2,
-            courseY + courseH / 2 + 5
-          );
+          ctx.fillText(compactClassName(schedule), courseX + courseW / 2, courseY + courseH / 2 + 5);
         } else {
-          fillTextCentered(ctx, code, courseX, courseY, courseW, courseH, 10.5, 6.5);
+          fillTextCentered(ctx, title, courseX, courseY, courseW, courseH, 10.5, 6.5);
         }
       });
     });
