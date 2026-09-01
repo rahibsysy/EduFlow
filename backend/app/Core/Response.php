@@ -13,4 +13,15 @@ class Response
         echo json_encode($data, JSON_UNESCAPED_UNICODE);
         exit;
     }
+
+    public static function pdf(string $content, string $filename, bool $inline = false): void
+    {
+        http_response_code(200);
+        header('Content-Type: application/pdf');
+        $disposition = $inline ? 'inline' : 'attachment';
+        header('Content-Disposition: ' . $disposition . '; filename="' . basename($filename) . '"');
+        header('Content-Length: ' . (string)strlen($content));
+        echo $content;
+        exit;
+    }
 }

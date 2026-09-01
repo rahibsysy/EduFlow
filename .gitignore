@@ -44,3 +44,4 @@ tmp/
 temp/
 .cache/
 backend/storage/backups/
+salma-mysql-image.tar

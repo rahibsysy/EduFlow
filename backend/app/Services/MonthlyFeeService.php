@@ -78,7 +78,7 @@ class MonthlyFeeService
             INNER JOIN students s ON s.id = mf.student_id
             LEFT JOIN class_levels cl ON cl.id = s.class_level_id
             {$whereSql}
-            ORDER BY mf.year_value ASC, FIELD(LPAD(mf.month_label, 2, "0"), "09", "10", "11", "12", "01", "02", "03", "04", "05", "06"), s.last_name ASC, s.first_name ASC
+            ORDER BY mf.year_value ASC, FIELD(LPAD(mf.month_label, 2, '0'), '09', '10', '11', '12', '01', '02', '03', '04', '05', '06'), s.last_name ASC, s.first_name ASC
         ";
 
         $stmt = $pdo->prepare($sql);

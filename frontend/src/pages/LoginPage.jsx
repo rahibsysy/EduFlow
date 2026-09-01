@@ -35,11 +35,16 @@ export default function LoginPage() {
     <section className="login-screen">
       <div className="login-hero">
         <p className="brand-kicker">{BRAND_NAME}</p>
-        <h1>Gestion financiere {SCHOOL_NAME}</h1>
+        <h1>Gestion financiere Pour Votre Etablissement</h1>
         <p>
           Connectez-vous pour suivre les encaissements, les impayes et la gestion
           operationnelle de votre etablissement sur une seule interface.
         </p>
+        <div className="login-features">
+          <span className="login-feature">Paiements & impayes</span>
+          <span className="login-feature">Eleves & classes</span>
+          <span className="login-feature">Tableaux de bord</span>
+        </div>
       </div>
 
       <div className="login-card">
@@ -59,7 +64,7 @@ export default function LoginPage() {
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             required
           />
-          <button type="submit" disabled={loading}>
+          <button type="submit" className="login-submit" disabled={loading}>
             {loading ? "Connexion..." : "Se connecter"}
           </button>
         </form>
