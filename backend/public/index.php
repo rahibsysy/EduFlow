@@ -13,9 +13,17 @@ if (PHP_SAPI === 'cli-server') {
 require_once __DIR__ . '/../vendor/autoload.php';
 
 use Dotenv\Dotenv;
+use App\Core\JwtSecret;
 
 $dotenv = Dotenv::createImmutable(__DIR__ . '/../');
 $dotenv->safeLoad();
+
+try {
+    JwtSecret::require();
+} catch (\Throwable) {
+    http_response_code(500);
+    exit('Application configuration error');
+}
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');

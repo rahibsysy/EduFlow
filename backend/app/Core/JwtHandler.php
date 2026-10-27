@@ -11,11 +11,11 @@ class JwtHandler
 {
     public static function encode(array $payload): string
     {
-        return JWT::encode($payload, $_ENV['JWT_SECRET'] ?? '', 'HS256');
+        return JWT::encode($payload, JwtSecret::require(), 'HS256');
     }
 
     public static function decode(string $token): object
     {
-        return JWT::decode($token, new Key($_ENV['JWT_SECRET'] ?? '', 'HS256'));
+        return JWT::decode($token, new Key(JwtSecret::require(), 'HS256'));
     }
 }

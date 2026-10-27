@@ -63,7 +63,9 @@ DB_PORT=3307
 DB_NAME=salma_project
 DB_USER=root
 DB_PASS=root
-JWT_SECRET=salma_super_secret_key
+# Generate with: php -r "echo base64_encode(random_bytes(48)), PHP_EOL;"
+# Paste the generated value here locally, or configure it in the deployment secret manager.
+JWT_SECRET=GENERATE_A_BASE64_SECRET_BEFORE_STARTING
 JWT_TTL=86400
 ```
 
