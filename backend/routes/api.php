@@ -28,6 +28,7 @@ use App\Controllers\SuperAdminController;
 use App\Controllers\TeacherController;
 use App\Controllers\TeacherAssignmentController;
 use App\Controllers\GradeController;
+use App\Controllers\InitialSetupController;
 use App\Controllers\UserController;
 use App\Core\Request;
 use App\Core\Router;
@@ -36,6 +37,8 @@ use App\Middleware\RoleMiddleware;
 use App\Middleware\SchoolRoleMiddleware;
 
 Router::add('POST', '/api/login', [new AuthController(), 'login']);
+Router::add('GET', '/api/setup/status', [new InitialSetupController(), 'status']);
+Router::add('POST', '/api/setup', [new InitialSetupController(), 'install']);
 Router::add('GET', '/api/account/profile', [new AccountController(), 'profile'], [AuthMiddleware::class]);
 Router::add('PUT', '/api/account/password', [new AccountController(), 'changePassword'], [AuthMiddleware::class]);
 Router::add('POST', '/api/account/photo', [new AccountController(), 'uploadPhoto'], [AuthMiddleware::class]);

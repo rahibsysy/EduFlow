@@ -69,6 +69,19 @@ JWT_SECRET=GENERATE_A_BASE64_SECRET_BEFORE_STARTING
 JWT_TTL=86400
 ```
 
+### Installation initiale sécurisée
+
+L’installation est désactivée par défaut. Pour une instance neuve locale, ajoutez temporairement à `backend/.env` une valeur Base64 distincte générée avec `random_bytes(48)` :
+
+```env
+INITIAL_SETUP_ENABLED=true
+INITIAL_SETUP_SECRET=<secret-de-provisioning-base64>
+```
+
+L’opérateur saisit ce secret dans la page `/setup`; il est envoyé uniquement dans l’en-tête `X-Setup-Secret` et n’est jamais stocké par le frontend. Après l’installation, remettez `INITIAL_SETUP_ENABLED=false` et retirez le secret de provisioning.
+
+En production, l’activation exige aussi `INITIAL_SETUP_ALLOWED_IPS` et une restriction indépendante au niveau pare-feu ou reverse proxy. N’exposez jamais `/setup` à Internet avant la fin du provisioning.
+
 Installer les dependances backend:
 ```bash
 cd backend

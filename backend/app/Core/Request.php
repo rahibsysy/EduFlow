@@ -41,6 +41,12 @@ class Request
         return null;
     }
 
+    public static function clientIp(): ?string
+    {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+        return is_string($ip) ? $ip : null;
+    }
+
     public static function set(string $key, mixed $value): void
     {
         self::$attributes[$key] = $value;

@@ -6,6 +6,7 @@ import AdminPage from "../pages/AdminPage";
 import ClassesPage from "../pages/ClassesPage";
 import DashboardPage from "../pages/DashboardPage";
 import LoginPage from "../pages/LoginPage";
+import SetupPage from "../pages/SetupPage";
 import FirstPasswordPage from "../pages/FirstPasswordPage";
 import MonthlyFeesPage from "../pages/MonthlyFeesPage";
 import NotFoundPage from "../pages/NotFoundPage";
@@ -38,6 +39,7 @@ export default function AppRouter() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LoginPage />} />
+        <Route path="/setup" element={<SetupPage />} />
         <Route path="/account/activate" element={<ProtectedRoute allowPasswordChange><FirstPasswordPage /></ProtectedRoute>} />
 
         <Route element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
