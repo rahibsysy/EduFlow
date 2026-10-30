@@ -48,8 +48,9 @@ Appliquer ensuite toutes les migrations:
 powershell -ExecutionPolicy Bypass -File .\migrate-database.ps1
 ```
 
-`02_data_dump.sql` est un ancien jeu de donnees local. Il ne fait pas partie de
-la synchronisation normale entre collaborateurs.
+Les anciens dumps SQL historiques ne font pas partie de la synchronisation entre
+collaborateurs. Ils peuvent contenir des données sensibles et ne doivent jamais
+être importés dans une base réelle.
 
 ## 4) Configurer le backend
 Fichier `backend/.env`:
@@ -151,8 +152,8 @@ Regles:
 
 ## 9) Fonctionnalites importantes ajoutees
 - scripts DB canoniques:
-  - `backend/storage/01_schema.sql`
-  - `backend/storage/02_data_dump.sql`
+  - baseline et migrations via `backend/bin/migrate.php`
+  - procédure documentée dans `backend/storage/migrations/README.md`
 - classes:
   - saisie du nom uniquement,
   - `code` + `sort_order` auto-generes en sequence.

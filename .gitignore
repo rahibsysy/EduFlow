@@ -50,3 +50,8 @@ temp/
 # Large Files & Docker
 salma-mysql-image.tar
 backend/storage/backups/
+
+# Local historical SQL dumps: retained locally, never versioned.
+/salma_project_dump.sql
+/backend/storage/02_data_dump.sql
+/backend/storage/03_sample_data.sql

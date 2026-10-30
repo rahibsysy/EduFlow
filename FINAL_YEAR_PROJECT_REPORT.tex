@@ -532,9 +532,15 @@ docker run -d --name salma-mysql \
 
 \subsection{Initialisation de la base de données}
 
+Les anciens dumps SQL ne sont pas une procédure d'initialisation : ils sont
+historiques, potentiellement sensibles et ne doivent jamais être importés dans
+une base réelle. Pour une base neuve et dédiée, la procédure officielle utilise
+le baseline puis les migrations du projet :
+
 \begin{lstlisting}[language=bash]
-docker exec -i salma-mysql mysql -uroot -proot < storage/01_schema.sql
-docker exec -i salma-mysql mysql -uroot -proot < storage/02_data_dump.sql
+cd backend
+php bin/migrate.php --bootstrap
+php bin/migrate.php --migrate
 \end{lstlisting}
 
 \subsection{Lancement du backend}
