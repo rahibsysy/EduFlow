@@ -1,0 +1,36 @@
+{
+  "format_version": 1,
+  "baseline": {
+    "id": "miranda-canonical-schema-2026-09-23-candidate",
+    "version": "baseline:miranda-canonical-schema-2026-09-23-candidate",
+    "state": "APPLIED",
+    "path": "baselines/2026_09_23_canonical_schema_candidate.sql",
+    "sha256": "ecd0c7b82c7d5a0e9b09f0372deed854e384d231ae39e8a03f2e6ee999b5d871"
+  },
+  "active_migrations": {
+    "path": "migrations",
+    "extension": ".sql"
+  },
+  "baseline_includes_through": "2026_09_23_001_add_direct_finance_permissions.sql",
+  "technical_reference_counts": {
+    "payment_methods": 5,
+    "permissions": 29,
+    "role_permissions": 29
+  },
+  "business_tables_must_be_empty": [
+    "schools",
+    "users",
+    "students",
+    "parents",
+    "families",
+    "guardians",
+    "personnel_profiles",
+    "academic_years",
+    "class_levels",
+    "level_fee_prices",
+    "monthly_fees",
+    "payments",
+    "student_financial_items",
+    "charge_categories"
+  ]
+}

@@ -225,6 +225,21 @@ Les fichiers `.env`, les sauvegardes MySQL, les photos uploadees et les
 donnees reelles des eleves, parents et paiements ne doivent jamais etre
 pousses.
 
+### Base vide et reprise apres echec
+
+Pour une base vide, utiliser le baseline puis les migrations :
+
+```bash
+cd backend
+php bin/migrate.php --bootstrap
+php bin/migrate.php --migrate
+```
+
+Si le bootstrap echoue, ne pas le relancer sur la base partiellement creee.
+Supprimer uniquement cette base vide dediee, la recreer, puis relancer le
+bootstrap. Pour une base contenant des donnees, restaurer une sauvegarde
+verifiee ; aucune procedure de reprise ne doit supprimer des donnees reelles.
+
 ## 11) Depannage rapide
 - Login "Identifiants invalides ou API indisponible":
   - verifier backend sur `127.0.0.1:8080`,
