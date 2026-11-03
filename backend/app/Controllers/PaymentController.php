@@ -53,7 +53,7 @@ class PaymentController
     public function delete(): void
     {
         $id = (int)Request::param('id', 0);
-        $result = (new PaymentService())->delete($id);
+        $result = (new PaymentService())->delete($id, Request::json());
 
         if (isset($result['error'])) {
             $status = $result['error'] === 'Payment not found' ? 404 : 422;

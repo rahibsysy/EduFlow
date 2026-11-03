@@ -19,7 +19,7 @@ class PaymentDocumentService
         [$schoolId, $currency] = $this->scope();
         $period = $this->period($filters, true);
         if (isset($period['error'])) return $period;
-        $stmt = Database::connect()->prepare('SELECT p.id,p.amount_paid,p.payment_date,p.payment_method,COALESCE(pm.label,p.payment_method) payment_method_label,s.first_name,s.last_name,COALESCE(cl.level_name,cl.name,s.class_level) class_level_name,COALESCE(cl.group_name,s.class_name) class_name,COALESCE(NULLIF(CONCAT_WS(" ",parent.first_name,parent.last_name),""),s.parent_name,"") responsible_name,mf.total_amount FROM payments p INNER JOIN students s ON s.id=p.student_id AND s.school_id=p.school_id INNER JOIN monthly_fees mf ON mf.id=p.monthly_fee_id AND mf.school_id=p.school_id LEFT JOIN class_levels cl ON cl.id=s.class_level_id AND cl.school_id=s.school_id LEFT JOIN parents parent ON parent.id=s.parent_id AND parent.school_id=s.school_id LEFT JOIN payment_methods pm ON pm.id=p.payment_method_id WHERE p.school_id=? AND mf.month_label=? AND mf.year_value=? ORDER BY class_level_name,class_name,s.last_name,s.first_name,p.payment_date,p.id');
+        $stmt = Database::connect()->prepare('SELECT p.id,p.amount_paid,p.payment_date,p.payment_method,COALESCE(pm.label,p.payment_method) payment_method_label,s.first_name,s.last_name,COALESCE(cl.level_name,cl.name,s.class_level) class_level_name,COALESCE(cl.group_name,s.class_name) class_name,COALESCE(NULLIF(CONCAT_WS(" ",parent.first_name,parent.last_name),""),s.parent_name,"") responsible_name,mf.total_amount FROM payments p INNER JOIN students s ON s.id=p.student_id AND s.school_id=p.school_id INNER JOIN monthly_fees mf ON mf.id=p.monthly_fee_id AND mf.school_id=p.school_id LEFT JOIN class_levels cl ON cl.id=s.class_level_id AND cl.school_id=s.school_id LEFT JOIN parents parent ON parent.id=s.parent_id AND parent.school_id=s.school_id LEFT JOIN payment_methods pm ON pm.id=p.payment_method_id WHERE p.school_id=? AND p.status="COMPLETED" AND mf.month_label=? AND mf.year_value=? ORDER BY class_level_name,class_name,s.last_name,s.first_name,p.payment_date,p.id');
         $stmt->execute([$schoolId, $period['month'], $period['year']]);
         $rows = $stmt->fetchAll();
         if (!$rows) return ['error' => 'Aucun paiement ne correspond au mois sélectionné.', 'status' => 422];
@@ -35,7 +35,7 @@ class PaymentDocumentService
         $period = $this->period($filters, false);
         if (isset($period['error'])) return $period;
         [$where, $params] = $this->feeFilters($studentId, $schoolId, $period);
-        $stmt = Database::connect()->prepare('SELECT mf.*,COALESCE((SELECT SUM(p.amount_paid) FROM payments p WHERE p.monthly_fee_id=mf.id AND p.school_id=mf.school_id),0) payment_sum FROM monthly_fees mf ' . $where . ' ORDER BY mf.year_value,LPAD(mf.month_label,2,"0")');
+        $stmt = Database::connect()->prepare('SELECT mf.*,COALESCE((SELECT SUM(p.amount_paid) FROM payments p WHERE p.monthly_fee_id=mf.id AND p.school_id=mf.school_id AND p.status="COMPLETED"),0) payment_sum FROM monthly_fees mf ' . $where . ' ORDER BY mf.year_value,LPAD(mf.month_label,2,"0")');
         $stmt->execute($params);
         $fees = $stmt->fetchAll();
         if (!$fees) return ['error' => 'Aucune donnée financière ne correspond à la période sélectionnée.', 'status' => 422];

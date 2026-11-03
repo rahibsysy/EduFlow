@@ -25,6 +25,7 @@ const emptyForm = {
 };
 
 const statusLabel = (value, t) => {
+  if (value === "CANCELLED") return "Annulé";
   if (value === "PAID") return t("statuses.paid");
   if (value === "PARTIAL") return t("statuses.partial");
   if (value === "UNPAID") return t("statuses.unpaid");
@@ -74,7 +75,7 @@ export default function PaymentsPage() {
   }, []);
 
   const totalPaid = useMemo(
-    () => payments.reduce((sum, item) => sum + Number(item.amount_paid || 0), 0),
+    () => payments.filter((item) => item.payment_status !== "CANCELLED").reduce((sum, item) => sum + Number(item.amount_paid || 0), 0),
     [payments]
   );
 
@@ -97,7 +98,7 @@ export default function PaymentsPage() {
       matchesText(payment.class_level_name, filters.class_level) &&
       matchesText(payment.class_name, filters.class_name) &&
       (!filters.month_label || String(payment.month_label).padStart(2, "0") === filters.month_label) &&
-      (!filters.status || payment.payment_status === filters.status)
+      (!filters.status || payment.monthly_fee_status === filters.status || payment.payment_status === filters.status)
     ));
   }, [filters, payments]);
 

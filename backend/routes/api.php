@@ -35,6 +35,7 @@ use App\Core\Router;
 use App\Middleware\AuthMiddleware;
 use App\Middleware\RoleMiddleware;
 use App\Middleware\SchoolRoleMiddleware;
+use App\Middleware\PermissionMiddleware;
 
 Router::add('POST', '/api/login', [new AuthController(), 'login']);
 Router::add('GET', '/api/setup/status', [new InitialSetupController(), 'status']);
@@ -101,8 +102,8 @@ Router::add('GET', '/api/payments', [new PaymentController(), 'index'], [AuthMid
 Router::add('POST', '/api/payments', [new PaymentController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('GET', '/api/payments/{id}', [new PaymentController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('PUT', '/api/payments/{id}', [new PaymentController(), 'update'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
-Router::add('POST', '/api/payments/{id}/cancel', [new PaymentController(), 'cancel'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
-Router::add('DELETE', '/api/payments/{id}', [new PaymentController(), 'delete'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
+Router::add('POST', '/api/payments/{id}/cancel', [new PaymentController(), 'cancel'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
+Router::add('DELETE', '/api/payments/{id}', [new PaymentController(), 'delete'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
 Router::add('GET', '/api/payment-documents/monthly', [new PaymentDocumentController(), 'monthly'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('GET', '/api/payment-documents/students/{id}', [new PaymentDocumentController(), 'student'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('GET', '/api/payment-documents/families/{id}', [new PaymentDocumentController(), 'family'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);

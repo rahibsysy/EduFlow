@@ -16,6 +16,7 @@ const formatDate = (value, language) => value
   : "-";
 
 const statusLabel = (value, t) => {
+  if (value === "CANCELLED") return "Annulé";
   if (value === "PAID") return t("statuses.paid");
   if (value === "PARTIAL") return t("statuses.partial");
   if (value === "UNPAID") return t("statuses.unpaid");
@@ -50,7 +51,7 @@ export default function PaymentsHistoryPage() {
       .catch(() => setError(t("payments.loadError")));
   }, [t]);
 
-  const totalPaid = useMemo(() => payments.reduce((sum, item) => sum + Number(item.amount_paid || 0), 0), [payments]);
+  const totalPaid = useMemo(() => payments.filter((item) => item.payment_status !== "CANCELLED").reduce((sum, item) => sum + Number(item.amount_paid || 0), 0), [payments]);
   const levelOptions = useMemo(() => Array.from(new Set(payments.map((item) => item.class_level_name).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [payments]);
   const filteredPayments = useMemo(() => {
     const includes = (value, search) => !search || normalizeSearch(value).includes(normalizeSearch(search));
@@ -61,7 +62,7 @@ export default function PaymentsHistoryPage() {
       && includes(payment.class_name, filters.class_name)
       && (!filters.month_label || String(payment.month_label).padStart(2, "0") === filters.month_label)
       && (!filters.year_value || String(payment.year_value) === String(filters.year_value))
-      && (!filters.status || payment.payment_status === filters.status)
+      && (!filters.status || payment.monthly_fee_status === filters.status || payment.payment_status === filters.status)
     ));
   }, [filters, payments]);
 
@@ -129,6 +130,7 @@ export default function PaymentsHistoryPage() {
             <option value="PAID">{t("statuses.paid")}</option>
             <option value="PARTIAL">{t("statuses.partial")}</option>
             <option value="UNPAID">{t("statuses.unpaid")}</option>
+            <option value="CANCELLED">Annulé</option>
           </select>
           <button type="button" className="secondary-btn" onClick={() => setFilters(emptyFilters)}>{t("common.resetFilters")}</button>
           <button type="button" onClick={exportMonth} disabled={exporting}>{exporting ? "Export en cours…" : "Exporter les paiements en PDF"}</button>
@@ -150,7 +152,7 @@ export default function PaymentsHistoryPage() {
                   <td>{payment.id}</td><td>{payment.first_name} {payment.last_name}</td><td>{payment.class_level_name || "-"}</td><td>{payment.class_name || "-"}</td>
                   <td>{t(`months.${String(payment.month_label).padStart(2, "0")}`)} {payment.year_value}</td>
                   <td>{formatMoney(payment.amount_paid, language)}</td><td>{formatDate(payment.payment_date, language)}</td>
-                  <td>{paymentMethodLabel(payment.payment_method_label || payment.payment_method, t)}</td><td>{statusLabel(payment.payment_status, t)}</td>
+                  <td>{paymentMethodLabel(payment.payment_method_label || payment.payment_method, t)}</td><td>{statusLabel(payment.payment_status === "CANCELLED" ? "CANCELLED" : payment.monthly_fee_status, t)}</td>
                   <td><div className="table-actions payment-table-actions">
                     <Link className="secondary-btn button-link" to={`/finances/payments/${payment.id}`}>{t("payments.viewDetails")}</Link>
                     <button type="button" onClick={() => downloadReceipt(payment.id)} disabled={downloadingId === payment.id}>{t("payments.downloadReceipt")}</button>

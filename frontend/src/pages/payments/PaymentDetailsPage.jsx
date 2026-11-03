@@ -34,8 +34,13 @@ export default function PaymentDetailsPage() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([getPaymentById(id), getReceiptData(id, language)])
-      .then(([payment, receipt]) => setDetails({ ...payment, ...receipt }))
+    getPaymentById(id)
+      .then((payment) => {
+        setDetails(payment);
+        return getReceiptData(id, language)
+          .then((receipt) => setDetails((current) => ({ ...current, ...receipt })))
+          .catch(() => setError(t("payments.previewError")));
+      })
       .catch(() => setError(t("payments.detailLoadError")))
       .finally(() => setLoading(false));
   }, [id, language, t]);
@@ -89,20 +94,20 @@ export default function PaymentDetailsPage() {
           <section className="panel payment-detail-panel">
             <div className="payment-detail-grid">
               <div><span>{t("payments.receiptNumber")}</span><strong>{details.receipt_number}</strong></div>
-              <div><span>{t("common.student")}</span><strong>{details.student}</strong></div>
+              <div><span>{t("common.student")}</span><strong>{details.student || `${details.first_name || ""} ${details.last_name || ""}`.trim() || "-"}</strong></div>
               <div><span>{t("payments.parentName")}</span><strong>{details.parent_name || "-"}</strong></div>
               <div><span>{t("common.level")}</span><strong>{details.class_level || "-"}</strong></div>
               <div><span>{t("common.class")}</span><strong>{details.class_name || "-"}</strong></div>
-              <div><span>{t("payments.period")}</span><strong>{details.period_label}</strong></div>
-              <div><span>{t("common.amount")}</span><strong>{details.amount_paid_label}</strong></div>
-              <div><span>{t("payments.feeTotal")}</span><strong>{details.fee_total_label}</strong></div>
-              <div><span>{t("payments.alreadyPaid")}</span><strong>{details.fee_amount_paid_label}</strong></div>
-              <div><span>{t("payments.remaining")}</span><strong>{details.fee_remaining_label}</strong></div>
+              <div><span>{t("payments.period")}</span><strong>{details.period_label || (details.month_label ? `${details.month_label}/${details.year_value}` : "Frais flexibles")}</strong></div>
+              <div><span>{t("common.amount")}</span><strong>{details.amount_paid_label || Number(details.amount_paid || 0).toLocaleString(language === "ar" ? "ar-MA" : "fr-MA", { style: "currency", currency: "MAD" })}</strong></div>
+              {details.monthly_fee_id && <><div><span>{t("payments.feeTotal")}</span><strong>{details.fee_total_label || "-"}</strong></div><div><span>{t("payments.alreadyPaid")}</span><strong>{details.fee_amount_paid_label || "-"}</strong></div><div><span>{t("payments.remaining")}</span><strong>{details.fee_remaining_label || "-"}</strong></div></>}
               <div><span>{t("payments.method")}</span><strong>{paymentMethodLabel(details.payment_method, t)}</strong></div>
               <div><span>{t("common.date")}</span><strong>{details.payment_date ? new Intl.DateTimeFormat(language === "ar" ? "ar-MA" : "fr-MA").format(new Date(details.payment_date)) : "-"}</strong></div>
               <div><span>{t("common.status")}</span><strong>{statusLabel(details.fee_status, t)}</strong></div>
+              {(details.payment_status || details.status) === "CANCELLED" && <div><span>Statut du paiement</span><strong>Annulé{details.cancellation_reason ? ` — ${details.cancellation_reason}` : ""}</strong></div>}
               <div><span>{t("payments.school")}</span><strong>{details.school_name || "-"}</strong></div>
             </div>
+            {Array.isArray(details.allocations) && details.allocations.length > 0 && <section className="panel"><h3>Frais réglés</h3><ul>{details.allocations.map((allocation) => <li key={allocation.student_financial_item_id}>{allocation.label} : {Number(allocation.amount || 0).toLocaleString(language === "ar" ? "ar-MA" : "fr-MA", { style: "currency", currency: "MAD" })}</li>)}</ul></section>}
             <div className="form-actions payment-detail-actions">
               <button type="button" className="secondary-btn" onClick={previewReceipt} disabled={actionLoading}>{t("payments.viewReceipt")}</button>
               <button type="button" onClick={downloadReceipt} disabled={actionLoading}>{t("payments.downloadReceipt")}</button>
