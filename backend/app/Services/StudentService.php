@@ -134,18 +134,20 @@ class StudentService
             return false;
         }
 
-        $financeStmt = $pdo->prepare('
-            SELECT
-                COALESCE(SUM(total_amount), 0) AS total_billed,
-                COALESCE(SUM(amount_paid), 0) AS total_paid,
-                COALESCE(SUM(remaining_amount), 0) AS total_remaining,
-                SUM(CASE WHEN status = "UNPAID" THEN 1 ELSE 0 END) AS unpaid_count,
-                SUM(CASE WHEN status = "PARTIAL" THEN 1 ELSE 0 END) AS partial_count
-            FROM monthly_fees
-            WHERE student_id = ? AND school_id = ?
-        ');
-        $financeStmt->execute([$studentId, (int)$student['school_id']]);
-        $finance = $financeStmt->fetch() ?: [];
+        // Consolidated financial projection for the active academic year.
+        $financialData = new FinancialDataService();
+        $finance = $financialData->getStudentFinancialSummary(
+            (int) $student['school_id'],
+            $studentId
+        );
+        $financialItems = $financialData->getStudentFinancialItems(
+            (int) $student['school_id'],
+            $studentId
+        );
+        $financialPayments = $financialData->getStudentPayments(
+            (int) $student['school_id'],
+            $studentId
+        );
 
         $feesStmt = $pdo->prepare('
             SELECT id, month_label, year_value, total_amount, amount_paid, remaining_amount, status
@@ -203,12 +205,15 @@ class StudentService
             ],
             'siblings' => $siblings,
             'finance' => [
-                'total_billed' => (float)($finance['total_billed'] ?? 0),
-                'total_paid' => (float)($finance['total_paid'] ?? 0),
-                'total_remaining' => (float)($finance['total_remaining'] ?? 0),
-                'unpaid_count' => (int)($finance['unpaid_count'] ?? 0),
-                'partial_count' => (int)($finance['partial_count'] ?? 0),
+                'total_due' => (float) $finance['total_due'],
+                'total_billed' => (float) $finance['total_due'],
+                'total_paid' => (float) $finance['total_paid'],
+                'total_remaining' => (float) $finance['total_remaining'],
+                'unpaid_count' => (int) $finance['unpaid_count'],
+                'partial_count' => (int) $finance['partial_count'],
             ],
+            'financial_items' => $financialItems,
+            'financial_payments' => $financialPayments,
             'monthly_fees' => $feesStmt->fetchAll(),
             'payments' => $paymentsStmt->fetchAll(),
             'guardians' => $guardiansStmt->fetchAll(),

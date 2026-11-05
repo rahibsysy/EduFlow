@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { SCHOOL_YEAR_MONTH_OPTIONS } from "../config/schoolOptions";
-import { getUnpaidMonthlyFees } from "../services/monthlyFeeService";
+import { getConsolidatedUnpaidItems } from "../services/financialDataService";
 import useI18n from "../hooks/useI18n";
 import { downloadUnpaidPdf } from "../services/paymentDocumentService";
 
@@ -22,6 +22,7 @@ const statusLabel = (value, t) => {
 export default function UnpaidPage() {
   const { language, t } = useI18n();
   const [items, setItems] = useState([]);
+  const [summary, setSummary] = useState({ total_remaining: 0, overdue: { total_remaining: 0 } });
   const [filters, setFilters] = useState({
     search: "",
     class_level: "",
@@ -34,10 +35,8 @@ export default function UnpaidPage() {
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
 
-  const totalRemaining = useMemo(
-    () => items.reduce((sum, item) => sum + Number(item.remaining_amount || 0), 0),
-    [items]
-  );
+  const totalRemaining = useMemo(() => Number(summary.total_remaining || 0), [summary]);
+  const totalOverdue = useMemo(() => Number(summary.overdue?.total_remaining || 0), [summary]);
 
   const applyFilters = async (e) => {
     e.preventDefault();
@@ -45,17 +44,19 @@ export default function UnpaidPage() {
     setLoading(true);
 
     try {
-      const data = await getUnpaidMonthlyFees({
+      const data = await getConsolidatedUnpaidItems({
         search: filters.search || undefined,
         class_level: filters.class_level || undefined,
         class_name: filters.class_name || undefined,
         month_label: filters.month_label || undefined,
         year_value: filters.year_value || undefined,
       });
-      setItems(Array.isArray(data) ? data : []);
+      setItems(Array.isArray(data?.items) ? data.items : []);
+      setSummary(data?.summary || { total_remaining: 0, overdue: { total_remaining: 0 } });
       setFiltersApplied(true);
     } catch (err) {
       setItems([]);
+      setSummary({ total_remaining: 0, overdue: { total_remaining: 0 } });
       setFiltersApplied(false);
       setError(t("unpaid.loadError"));
     } finally {
@@ -66,19 +67,25 @@ export default function UnpaidPage() {
   const resetFilters = () => {
     setFilters({ search: "", class_level: "", class_name: "", month_label: "", year_value: "" });
     setItems([]);
+    setSummary({ total_remaining: 0, overdue: { total_remaining: 0 } });
     setFiltersApplied(false);
     setError("");
   };
 
   const exportPdf = async () => {
-    if (!filters.month_label || !filters.year_value || exporting) {
-      setError("Sélectionnez un mois et une année avant l’export PDF.");
+    if (exporting) {
       return;
     }
     setExporting(true);
     setError("");
     try {
-      await downloadUnpaidPdf({ month_label: filters.month_label, year_value: filters.year_value });
+      await downloadUnpaidPdf({
+        search: filters.search || undefined,
+        class_level: filters.class_level || undefined,
+        class_name: filters.class_name || undefined,
+        month_label: filters.month_label || undefined,
+        year_value: filters.year_value || undefined,
+      });
     } catch {
       setError("Impossible d’exporter les impayés.");
     } finally {
@@ -98,6 +105,11 @@ export default function UnpaidPage() {
           <p className="kpi-label">{t("unpaid.totalToRecover")}</p>
           <h2>{formatMoney(totalRemaining, language)}</h2>
           <p className="muted">{t("unpaid.totalHelp")}</p>
+        </article>
+        <article className="panel kpi">
+          <p className="kpi-label">Montant en retard prouvé</p>
+          <h2>{formatMoney(totalOverdue, language)}</h2>
+          <p className="muted">Uniquement les frais avec une échéance enregistrée et dépassée.</p>
         </article>
       </section>
 
@@ -140,7 +152,7 @@ export default function UnpaidPage() {
           <button type="submit" disabled={loading}>
             {loading ? t("common.loading") : t("common.apply")}
           </button>
-          <button type="button" onClick={exportPdf} disabled={exporting}>{exporting ? "Export en cours…" : "Exporter les impayés en PDF"}</button>
+          <button type="button" onClick={exportPdf} disabled={exporting}>{exporting ? "Export en cours…" : "Exporter les impayés consolidés en PDF"}</button>
         </form>
         <div className="table-wrap">
           <table>
@@ -151,8 +163,13 @@ export default function UnpaidPage() {
                 <th>{t("common.class")}</th>
                 <th>{t("common.parent")}</th>
                 <th>{t("common.phone")}</th>
-                <th>{t("monthlyFees.month")}</th>
-                <th>{t("common.year")}</th>
+                <th>Type</th>
+                <th>Libellé</th>
+                <th>{t("common.schoolYear")}</th>
+                <th>Initial</th>
+                <th>Remise</th>
+                <th>Montant dû</th>
+                <th>{t("monthlyFees.paid")}</th>
                 <th>{t("monthlyFees.remaining")}</th>
                 <th>{t("unpaid.dueDate")}</th>
                 <th>{t("common.status")}</th>
@@ -169,17 +186,22 @@ export default function UnpaidPage() {
                   <td>{item.class_group_name || "-"}</td>
                   <td>{item.parent_name}</td>
                   <td>{item.phone || "-"}</td>
-                  <td>{t(`months.${String(item.month_label).padStart(2, "0")}`)}</td>
-                  <td>{item.year_value}</td>
+                  <td>{item.fee_type === "MONTHLY" ? "Mensualité" : "Frais flexible"}</td>
+                  <td>{item.label}</td>
+                  <td>{item.academic_year_name || item.year_value || "-"}</td>
+                  <td>{formatMoney(item.initial_amount, language)}</td>
+                  <td>{formatMoney(item.discount_amount, language)}</td>
+                  <td>{formatMoney(item.final_amount, language)}</td>
+                  <td>{formatMoney(item.paid_amount, language)}</td>
                   <td>{formatMoney(item.remaining_amount, language)}</td>
                   <td>{formatDate(item.due_date, language)}</td>
                   <td>{statusLabel(item.status, t)}</td>
-                  <td>{item.days_late ?? "-"}</td>
+                  <td>{item.is_overdue ? item.days_late : "-"}</td>
                 </tr>
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan="11" className="table-empty">
+                  <td colSpan="16" className="table-empty">
                     {filtersApplied ? t("unpaid.emptyFiltered") : t("unpaid.emptyInitial")}
                   </td>
                 </tr>

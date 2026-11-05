@@ -4,6 +4,7 @@ import useI18n from "../hooks/useI18n";
 import { downloadReceiptPdf } from "../services/receiptService";
 import { downloadStudentPaymentsPdf } from "../services/paymentDocumentService";
 import { getStudentById, uploadStudentPhoto } from "../services/studentService";
+import useAuth from "../hooks/useAuth";
 
 const API_URL = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
 const localeFor = (language) => (language === "ar" ? "ar-MA" : "fr-MA");
@@ -34,6 +35,7 @@ const paymentMethodLabel = (value, t) => {
 export default function StudentDetailsPage() {
   const { id } = useParams();
   const { language, t } = useI18n();
+  const { can } = useAuth();
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -54,6 +56,12 @@ export default function StudentDetailsPage() {
 
   const student = details?.student || {};
   const finance = details?.finance || {};
+  const financialItems = details?.financial_items || [];
+  const monthlyItems = financialItems.filter((item) => item.source_type === "LEGACY_MONTHLY_FEE");
+  const flexibleItems = financialItems.filter((item) => item.source_type === "FLEXIBLE_ITEM");
+  const financialPayments = details?.financial_payments || details?.payments || [];
+  const canViewFinance = can("finance.view");
+  const canManageFinance = can("finance.manage");
   const initials = useMemo(() => `${student.first_name?.[0] || ""}${student.last_name?.[0] || ""}`.toUpperCase(), [student.first_name, student.last_name]);
   const photoUrl = resolvePhoto(student.photo_path);
 
@@ -111,7 +119,7 @@ export default function StudentDetailsPage() {
         </div>
         <div className="table-actions student-profile-main-actions">
           <Link className="secondary-btn button-link" to="/students">{t("studentProfile.backToStudents")}</Link>
-          <Link className="button-link" to={`/finances/payments/new?student_id=${student.id}`}>{t("payments.newPayment")}</Link>
+          {canManageFinance && <Link className="button-link" to={`/finances/payments/new?student_id=${student.id}`}>{t("payments.newPayment")}</Link>}
         </div>
       </section>
 
@@ -145,11 +153,11 @@ export default function StudentDetailsPage() {
         </article>
       </section>
 
-      <section className="kpi-grid student-finance-kpis">
-        <article className="panel kpi"><p className="kpi-label">{t("studentProfile.totalBilled")}</p><h2>{formatMoney(finance.total_billed, language)}</h2></article>
+      {canViewFinance && <section className="kpi-grid student-finance-kpis">
+        <article className="panel kpi"><p className="kpi-label">Total dû</p><h2>{formatMoney(finance.total_due ?? finance.total_billed, language)}</h2><p className="muted">Initial {formatMoney(finance.total_initial, language)} · Remises {formatMoney(finance.total_discount, language)}</p></article>
         <article className="panel kpi"><p className="kpi-label">{t("studentProfile.totalPaid")}</p><h2>{formatMoney(finance.total_paid, language)}</h2></article>
-        <article className="panel kpi"><p className="kpi-label">{t("studentProfile.totalRemaining")}</p><h2>{formatMoney(finance.total_remaining, language)}</h2></article>
-      </section>
+        <article className="panel kpi"><p className="kpi-label">{t("studentProfile.totalRemaining")}</p><h2>{formatMoney(finance.total_remaining, language)}</h2><p className="muted">Trop-perçu {formatMoney(finance.total_overpaid, language)}</p></article>
+      </section>}
 
       <section className="split-panel student-context-panels">
         <article className="panel">
@@ -174,21 +182,29 @@ export default function StudentDetailsPage() {
         </article>
       </section>
 
-      <section className="panel">
+      {canViewFinance && <section className="panel">
         <div className="panel-header"><div><h3>{t("studentProfile.monthlyFees")}</h3><p className="muted">{t("studentProfile.monthlyFeesHelp")}</p></div></div>
         <div className="table-wrap"><table><thead><tr><th>{t("payments.period")}</th><th>{t("studentProfile.billed")}</th><th>{t("studentProfile.paid")}</th><th>{t("payments.remaining")}</th><th>{t("common.status")}</th></tr></thead><tbody>
-          {(details.monthly_fees || []).map((fee) => <tr key={fee.id}><td>{t(`months.${String(fee.month_label).padStart(2, "0")}`)} {fee.year_value}</td><td>{formatMoney(fee.total_amount, language)}</td><td>{formatMoney(fee.amount_paid, language)}</td><td>{formatMoney(fee.remaining_amount, language)}</td><td>{t(`statuses.${String(fee.status || "unpaid").toLowerCase()}`)}</td></tr>)}
-          {!(details.monthly_fees || []).length && <tr><td colSpan="5" className="table-empty">{t("studentProfile.noFees")}</td></tr>}
+          {monthlyItems.map((fee) => <tr key={fee.source_id}><td>{fee.period || "-"}</td><td>{formatMoney(fee.final_amount, language)}</td><td>{formatMoney(fee.paid_amount, language)}</td><td>{formatMoney(fee.remaining_amount, language)}</td><td>{t(`statuses.${String(fee.status || "unpaid").toLowerCase()}`)}</td></tr>)}
+          {!monthlyItems.length && <tr><td colSpan="5" className="table-empty">{t("studentProfile.noFees")}</td></tr>}
         </tbody></table></div>
-      </section>
+      </section>}
 
-      <section className="panel">
+      {canViewFinance && <section className="panel">
+        <div className="panel-header"><div><h3>Frais flexibles</h3><p className="muted">Les échéances absentes ne sont jamais présentées comme des retards.</p></div></div>
+        <div className="table-wrap"><table><thead><tr><th>Libellé</th><th>Initial</th><th>Remise</th><th>Dû</th><th>Payé</th><th>Reste</th><th>Échéance</th><th>Statut</th></tr></thead><tbody>
+          {flexibleItems.map((item) => <tr key={item.source_id}><td>{item.label}</td><td>{formatMoney(item.initial_amount, language)}</td><td>{formatMoney(item.discount_amount, language)}</td><td>{formatMoney(item.final_amount, language)}</td><td>{formatMoney(item.paid_amount, language)}</td><td>{formatMoney(item.remaining_amount, language)}</td><td>{formatDate(item.due_date, language)}</td><td>{t(`statuses.${String(item.status || "unpaid").toLowerCase()}`)}</td></tr>)}
+          {!flexibleItems.length && <tr><td colSpan="8" className="table-empty">Aucun frais flexible.</td></tr>}
+        </tbody></table></div>
+      </section>}
+
+      {canViewFinance && <section className="panel">
         <div className="panel-header"><div><h3>{t("studentProfile.paymentHistory")}</h3><p className="muted">{t("studentProfile.paymentHistoryHelp")}</p></div><button type="button" onClick={exportPaymentHistory} disabled={exportingPayments}>{exportingPayments ? "Export en cours…" : "Exporter l’historique PDF"}</button></div>
         <div className="table-wrap"><table><thead><tr><th>{t("payments.receiptNumber")}</th><th>{t("common.date")}</th><th>{t("payments.period")}</th><th>{t("common.amount")}</th><th>{t("payments.method")}</th><th>{t("common.actions")}</th></tr></thead><tbody>
-          {(details.payments || []).map((payment) => <tr key={payment.id}><td>{payment.receipt_number || `REC-${String(payment.id).padStart(6, "0")}`}</td><td>{formatDate(payment.payment_date, language)}</td><td>{t(`months.${String(payment.month_label).padStart(2, "0")}`)} {payment.year_value}</td><td>{formatMoney(payment.amount_paid, language)}</td><td>{paymentMethodLabel(payment.payment_method_label || payment.payment_method, t)}</td><td><div className="table-actions"><Link className="secondary-btn button-link" to={`/finances/payments/${payment.id}`}>{t("common.details")}</Link><button type="button" onClick={() => downloadReceipt(payment.id)} disabled={downloadingId === payment.id}>{t("payments.downloadReceipt")}</button></div></td></tr>)}
-          {!(details.payments || []).length && <tr><td colSpan="6" className="table-empty">{t("studentProfile.noPayments")}</td></tr>}
+          {financialPayments.map((payment) => { const paymentId = payment.payment_id || payment.id; return <tr key={paymentId}><td>{payment.receipt_number || `REC-${String(paymentId).padStart(6, "0")}`}</td><td>{formatDate(payment.date || payment.payment_date, language)}</td><td>{payment.source === "FLEXIBLE" ? "Frais flexibles" : (payment.period || "-")}{payment.status === "CANCELLED" ? " · Annulé" : ""}</td><td>{formatMoney(payment.amount || payment.amount_paid, language)}</td><td>{paymentMethodLabel(payment.method || payment.payment_method_label || payment.payment_method, t)}</td><td><div className="table-actions"><Link className="secondary-btn button-link" to={`/finances/payments/${paymentId}`}>{t("common.details")}</Link><button type="button" onClick={() => downloadReceipt(paymentId)} disabled={downloadingId === paymentId}>{t("payments.downloadReceipt")}</button></div></td></tr>; })}
+          {!financialPayments.length && <tr><td colSpan="6" className="table-empty">{t("studentProfile.noPayments")}</td></tr>}
         </tbody></table></div>
-      </section>
+      </section>}
     </div>
   );
 }

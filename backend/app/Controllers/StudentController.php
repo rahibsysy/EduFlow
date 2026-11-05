@@ -6,11 +6,13 @@ namespace App\Controllers;
 
 use App\Core\Request;
 use App\Core\Response;
+use App\Middleware\PermissionMiddleware;
 use App\Services\StudentImportService;
 use App\Services\StudentService;
 
 class StudentController
 {
+    private const STUDENT_FINANCIAL_FIELDS=['monthly_amount','discount_percent']; private const FINANCIAL_RESPONSE_FIELDS=['finance','financial_items','financial_payments','monthly_fees','payments','charges'];
     public function index(): void
     {
         Response::json((new StudentService())->getAll($_GET));
@@ -36,6 +38,7 @@ class StudentController
         if (!$result) {
             Response::json(['message' => 'Student not found'], 404);
         }
+        if (!PermissionMiddleware::allows('finance.view')) { foreach(self::FINANCIAL_RESPONSE_FIELDS as $f)$result[$f]=[]; $result['finance']=null; foreach(self::STUDENT_FINANCIAL_FIELDS as $f)unset($result['student'][$f]); }
 
         Response::json($result);
     }

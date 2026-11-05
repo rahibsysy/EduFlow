@@ -10,7 +10,7 @@ use Dotenv\Dotenv;
 
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
-if (getenv('MIRANDA_FINANCE_TEST') !== '1' || !preg_match('/^miranda_finance_test_/', (string)(getenv('DB_NAME') ?: ''))) {
+if (getenv('MIRANDA_FINANCE_TEST') !== '1' || !preg_match('/^miranda_finance_(?:data_)?test_/', (string)(getenv('DB_NAME') ?: ''))) {
     fwrite(STDERR, "Refusing to run outside a dedicated miranda_finance_test_* database.\n");
     exit(2);
 }

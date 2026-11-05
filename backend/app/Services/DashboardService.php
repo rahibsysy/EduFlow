@@ -21,52 +21,22 @@ class DashboardService
         $whereSchool = $isSuperAdmin ? '' : ' WHERE school_id = ?';
         $whereSchoolAnd = $isSuperAdmin ? ' WHERE ' : ' WHERE school_id = ? AND ';
 
-        $stmtCollected = $pdo->prepare("SELECT COALESCE(SUM(amount_paid), 0) AS total FROM payments{$whereSchool}");
-        $stmtCollected->execute($params);
-        $totalCollected = (float)($stmtCollected->fetch()['total'] ?? 0);
-
-        $stmtUnpaid = $pdo->prepare("SELECT COALESCE(SUM(remaining_amount), 0) AS total FROM monthly_fees{$whereSchoolAnd}status != 'PAID'");
-        $stmtUnpaid->execute($params);
-        $totalUnpaid = (float)($stmtUnpaid->fetch()['total'] ?? 0);
-
-        $lateSql = "
-            SELECT COUNT(DISTINCT mf.student_id) AS total
-            FROM monthly_fees mf
-            INNER JOIN students s ON s.id = mf.student_id
-            WHERE mf.status != 'PAID'
-              AND mf.month_label REGEXP '^[0-9]{1,2}$'
-              AND STR_TO_DATE(
-                    CONCAT(
-                        mf.year_value, '-', LPAD(mf.month_label, 2, '0'), '-',
-                        LPAD(
-                            LEAST(
-                                DAY(s.created_at),
-                                DAY(LAST_DAY(STR_TO_DATE(CONCAT(mf.year_value, '-', LPAD(mf.month_label, 2, '0'), '-01'), '%Y-%m-%d')))
-                            ),
-                            2,
-                            '0'
-                        )
-                    ),
-                    '%Y-%m-%d'
-                  ) <= CURDATE()
-        ";
-        if (!$isSuperAdmin) {
-            $lateSql .= ' AND mf.school_id = ?';
-        }
-        $stmtLate = $pdo->prepare($lateSql);
-        $stmtLate->execute($params);
-        $lateStudents = (int)($stmtLate->fetch()['total'] ?? 0);
+        $schoolIds = $isSuperAdmin
+            ? array_map('intval', $pdo->query('SELECT id FROM schools')->fetchAll(\PDO::FETCH_COLUMN))
+            : ($schoolId > 0 ? [$schoolId] : []);
+        $projectionService = new FinancialDataService();
+        $financial = $this->financialDashboardData($projectionService, $schoolIds);
 
         $stmtStudents = $pdo->prepare("SELECT COUNT(*) AS total FROM students{$whereSchool}");
         $stmtStudents->execute($params);
         $studentsCount = (int)($stmtStudents->fetch()['total'] ?? 0);
 
-        $stmtPayments = $pdo->prepare("SELECT COUNT(*) AS total FROM payments{$whereSchool}");
+        $stmtPayments = $pdo->prepare("SELECT COUNT(*) AS total FROM payments{$whereSchoolAnd}status = 'COMPLETED'");
         $stmtPayments->execute($params);
         $paymentsCount = (int)($stmtPayments->fetch()['total'] ?? 0);
 
-        $coverageRate = ($totalCollected + $totalUnpaid) > 0
-            ? round(($totalCollected / ($totalCollected + $totalUnpaid)) * 100, 2)
+        $coverageRate = $financial['total_due'] > 0
+            ? round(($financial['total_collected'] / $financial['total_due']) * 100, 2)
             : 0.0;
 
         $recentSql = "
@@ -79,7 +49,7 @@ class DashboardService
                 CONCAT(s.first_name, ' ', s.last_name) AS student_name
             FROM payments p
             JOIN students s ON s.id = p.student_id
-            " . ($isSuperAdmin ? "" : "WHERE p.school_id = ?") . "
+            " . ($isSuperAdmin ? "WHERE p.status = 'COMPLETED'" : "WHERE p.school_id = ? AND p.status = 'COMPLETED'") . "
             ORDER BY p.payment_date DESC, p.id DESC
             LIMIT 5
         ";
@@ -87,32 +57,58 @@ class DashboardService
         $stmtRecent->execute($params);
         $recentPayments = $stmtRecent->fetchAll();
 
-        $unpaidSql = "
-            SELECT
-                mf.student_id,
-                CONCAT(s.first_name, ' ', s.last_name) AS student_name,
-                COALESCE(SUM(mf.remaining_amount), 0) AS total_remaining
-            FROM monthly_fees mf
-            JOIN students s ON s.id = mf.student_id
-            WHERE mf.status != 'PAID'
-            " . ($isSuperAdmin ? "" : "AND mf.school_id = ?") . "
-            GROUP BY mf.student_id, s.first_name, s.last_name
-            ORDER BY total_remaining DESC
-            LIMIT 5
-        ";
-        $stmtUnpaidTop = $pdo->prepare($unpaidSql);
-        $stmtUnpaidTop->execute($params);
-        $topUnpaidStudents = $stmtUnpaidTop->fetchAll();
-
         return [
-            'total_collected' => $totalCollected,
-            'total_unpaid' => $totalUnpaid,
-            'late_students' => $lateStudents,
+            'total_due' => $financial['total_due'],
+            'total_collected' => $financial['total_collected'],
+            'total_unpaid' => $financial['total_unpaid'],
+            'total_overdue' => $financial['total_overdue'],
+            'unpaid_breakdown' => $financial['unpaid_breakdown'],
+            'late_students' => $financial['late_students'],
             'students_count' => $studentsCount,
             'payments_count' => $paymentsCount,
             'coverage_rate' => $coverageRate,
             'recent_payments' => $recentPayments,
-            'top_unpaid_students' => $topUnpaidStudents,
+            'top_unpaid_students' => $financial['top_unpaid_students'],
         ];
+    }
+
+    private function financialDashboardData(FinancialDataService $service, array $schoolIds): array
+    {
+        $result = [
+            'total_due' => 0.0,
+            'total_collected' => 0.0,
+            'total_unpaid' => 0.0,
+            'total_overdue' => 0.0,
+            'late_students' => 0,
+            'unpaid_breakdown' => ['monthly' => 0.0, 'flexible' => 0.0],
+            'top_unpaid_students' => [],
+        ];
+
+        foreach ($schoolIds as $schoolId) {
+            $projection = $service->getSchoolFinancialSummary($schoolId);
+            $summary = $projection['summary'];
+            $result['total_due'] += (float) $summary['total_due'];
+            $result['total_collected'] += (float) $summary['total_paid'];
+            $result['total_unpaid'] += (float) $summary['total_remaining'];
+            $result['total_overdue'] += (float) $summary['overdue']['total_remaining'];
+            $result['late_students'] += (int) $projection['late_students'];
+            $result['unpaid_breakdown']['monthly'] += (float) $summary['monthly']['total_remaining'];
+            $result['unpaid_breakdown']['flexible'] += (float) $summary['flexible']['total_remaining'];
+            $result['top_unpaid_students'] = array_merge($result['top_unpaid_students'], $projection['top_unpaid_students']);
+        }
+
+        foreach (['total_due', 'total_collected', 'total_unpaid', 'total_overdue'] as $key) {
+            $result[$key] = round($result[$key], 2);
+        }
+        foreach (['monthly', 'flexible'] as $key) {
+            $result['unpaid_breakdown'][$key] = round($result['unpaid_breakdown'][$key], 2);
+        }
+        usort($result['top_unpaid_students'], static fn(array $left, array $right): int =>
+            ($right['total_remaining'] <=> $left['total_remaining'])
+            ?: strcmp($left['student_name'], $right['student_name'])
+        );
+        $result['top_unpaid_students'] = array_slice($result['top_unpaid_students'], 0, 5);
+
+        return $result;
     }
 }

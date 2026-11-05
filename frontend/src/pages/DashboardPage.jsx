@@ -21,6 +21,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const { language, t } = useI18n();
   const [stats, setStats] = useState({
+    total_due: 0,
     total_collected: 0,
     total_unpaid: 0,
     late_students: 0,
@@ -46,6 +47,12 @@ export default function DashboardPage() {
   const schoolName = user?.school_name || SCHOOL_NAME;
   const cards = useMemo(
     () => [
+      {
+        label: t("dashboard.totalDue"),
+        value: formatMoney(stats.total_due, language),
+        helper: t("dashboard.totalDueHelp"),
+        to: "/finances/unpaid",
+      },
       {
         label: t("dashboard.collectedAmount"),
         value: formatMoney(stats.total_collected, language),

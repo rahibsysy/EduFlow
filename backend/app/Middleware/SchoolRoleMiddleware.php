@@ -20,6 +20,12 @@ class SchoolRoleMiddleware
         $schoolId = (int)($authUser['school_id'] ?? 0);
         $allowedRoles = is_array($this->allowedRoles) ? $this->allowedRoles : [$this->allowedRoles];
 
+        // A super administrator has no mandatory school context.  Services remain
+        // responsible for applying a requested/explicit school scope where needed.
+        if ($role === 'super_admin') {
+            return;
+        }
+
         if ($schoolId <= 0) {
             Response::json([
                 'code' => 'SCHOOL_CONTEXT_REQUIRED',
