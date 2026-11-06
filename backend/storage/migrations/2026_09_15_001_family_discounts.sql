@@ -1,0 +1,61 @@
+CREATE TABLE IF NOT EXISTS family_discounts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    school_id INT NOT NULL,
+    family_id INT NOT NULL,
+    discount_type ENUM('PERCENTAGE','FIXED') NOT NULL,
+    discount_value DECIMAL(12,2) NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    starts_on DATE NULL,
+    ends_on DATE NULL,
+    status ENUM('ACTIVE','CANCELLED','REPLACED') NOT NULL DEFAULT 'ACTIVE',
+    created_by INT NULL,
+    cancelled_by INT NULL,
+    cancelled_at DATETIME NULL,
+    cancellation_reason TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    KEY family_discounts_school_family_status_idx (school_id, family_id, status),
+    CONSTRAINT family_discounts_school_fk FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    CONSTRAINT family_discounts_family_fk FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE RESTRICT,
+    CONSTRAINT family_discounts_created_by_fk FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT family_discounts_cancelled_by_fk FOREIGN KEY (cancelled_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS family_discount_impacts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    family_discount_id INT NOT NULL,
+    school_id INT NOT NULL,
+    student_financial_item_id INT NOT NULL,
+    student_id INT NOT NULL,
+    previous_total_amount DECIMAL(12,2) NOT NULL,
+    previous_discount_amount DECIMAL(12,2) NOT NULL,
+    previous_final_amount DECIMAL(12,2) NOT NULL,
+    applied_discount_amount DECIMAL(12,2) NOT NULL,
+    final_amount DECIMAL(12,2) NOT NULL,
+    status ENUM('APPLIED','REVERSED') NOT NULL DEFAULT 'APPLIED',
+    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reversed_at DATETIME NULL,
+    KEY family_discount_impacts_discount_status_idx (family_discount_id, status),
+    KEY family_discount_impacts_school_item_status_idx (school_id, student_financial_item_id, status),
+    UNIQUE KEY family_discount_impacts_discount_item_unique (family_discount_id, student_financial_item_id),
+    CONSTRAINT family_discount_impacts_discount_fk FOREIGN KEY (family_discount_id) REFERENCES family_discounts(id) ON DELETE RESTRICT,
+    CONSTRAINT family_discount_impacts_school_fk FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    CONSTRAINT family_discount_impacts_item_fk FOREIGN KEY (student_financial_item_id) REFERENCES student_financial_items(id) ON DELETE RESTRICT,
+    CONSTRAINT family_discount_impacts_student_fk FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS family_discount_history (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    family_discount_id INT NOT NULL,
+    school_id INT NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    before_data JSON NULL,
+    after_data JSON NULL,
+    reason TEXT NULL,
+    changed_by INT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY family_discount_history_discount_idx (family_discount_id),
+    CONSTRAINT family_discount_history_discount_fk FOREIGN KEY (family_discount_id) REFERENCES family_discounts(id) ON DELETE RESTRICT,
+    CONSTRAINT family_discount_history_school_fk FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    CONSTRAINT family_discount_history_user_fk FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE SET NULL
+);

@@ -25,6 +25,7 @@ use App\Controllers\StudentDocumentController;
 use App\Controllers\ChargeCategoryController;
 use App\Controllers\DiscountController;
 use App\Controllers\FinancialDataController;
+use App\Controllers\FamilyDiscountController;
 use App\Controllers\FamilyController;
 use App\Controllers\StudentChargeController;
 use App\Controllers\SuperAdminController;
@@ -77,13 +78,17 @@ Router::add('GET', '/api/students', [new StudentController(), 'index'], [AuthMid
 Router::add('POST', '/api/students', [new StudentController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('POST', '/api/students/import', [new StudentController(), 'importClass'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('GET', '/api/students/{id}', [new StudentController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
-// The service scopes the family by the authenticated school; the controller
-// redacts its financial projection unless finance.view is granted.
-Router::add('GET', '/api/families/{id}', [new FamilyController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('POST', '/api/students/{id}/photo', [new StudentController(), 'uploadPhoto'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('PUT', '/api/students/{id}', [new StudentController(), 'update'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('DELETE', '/api/students/{id}', [new StudentController(), 'delete'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('GET', '/api/parents/summary', [new StudentController(), 'parentSummary'], [AuthMiddleware::class]);
+Router::add('GET', '/api/families/candidates', [new FamilyController(), 'candidates'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
+Router::add('POST', '/api/families', [new FamilyController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('families.manage')]);
+Router::add('GET', '/api/families/{id}', [new FamilyController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
+Router::add('POST', '/api/families/{id}/students', [new FamilyController(), 'attach'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('families.manage')]);
+Router::add('DELETE', '/api/students/{id}/family', [new FamilyController(), 'detach'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('families.manage')]);
+Router::add('GET', '/api/students/{id}/guardians', [new FamilyController(), 'guardians'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
+Router::add('POST', '/api/students/{id}/guardians', [new FamilyController(), 'addGuardian'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('families.manage')]);
 Router::add('GET', '/api/class-levels', [new ClassLevelController(), 'index'], [AuthMiddleware::class]);
 Router::add('POST', '/api/class-levels', [new ClassLevelController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('GET', '/api/class-levels/{id}', [new ClassLevelController(), 'show'], [AuthMiddleware::class]);
@@ -150,6 +155,13 @@ Router::add('GET', '/api/discounts/{id}/history', [new DiscountController(), 'hi
 Router::add('PATCH', '/api/discounts/{id}/cancel', [new DiscountController(), 'cancel'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
 Router::add('POST', '/api/discounts/{id}/replace', [new DiscountController(), 'replace'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
 Router::add('GET', '/api/discounts/{id}', [new DiscountController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);
+Router::add('GET', '/api/family-discounts', [new FamilyDiscountController(), 'index'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);
+Router::add('POST', '/api/family-discounts/preview', [new FamilyDiscountController(), 'preview'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
+Router::add('POST', '/api/family-discounts', [new FamilyDiscountController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
+Router::add('GET', '/api/family-discounts/{id}/history', [new FamilyDiscountController(), 'history'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);
+Router::add('PATCH', '/api/family-discounts/{id}/cancel', [new FamilyDiscountController(), 'cancel'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
+Router::add('PUT', '/api/family-discounts/{id}', [new FamilyDiscountController(), 'update'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.manage')]);
+Router::add('GET', '/api/family-discounts/{id}', [new FamilyDiscountController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);
 Router::add('GET', '/api/dashboard', [new DashboardController(), 'index'], [AuthMiddleware::class, new RoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);
 Router::add('GET', '/api/dashboard/alerts', [new AlertController(), 'index'], [AuthMiddleware::class, new RoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);
 Router::add('GET', '/api/school/dashboard', [new DashboardController(), 'index'], [AuthMiddleware::class, new RoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);

@@ -29,6 +29,7 @@ import UnpaidPage from "../pages/UnpaidPage";
 import PaymentCreatePage from "../pages/payments/PaymentCreatePage";
 import PaymentDetailsPage from "../pages/payments/PaymentDetailsPage";
 import PaymentsHistoryPage from "../pages/payments/PaymentsHistoryPage";
+import FamilyDiscountsPage from "../pages/FamilyDiscountsPage";
 
 const FinanceRoute = ({ children }) => (
   <RoleRoute roles={["admin", "user"]}>{children}</RoleRoute>
@@ -63,6 +64,7 @@ export default function AppRouter() {
           <Route path="/finances/payments/:id" element={<FinanceRoute><PaymentDetailsPage /></FinanceRoute>} />
           <Route path="/finances/monthly-fees" element={<FinanceRoute><MonthlyFeesPage /></FinanceRoute>} />
           <Route path="/finances/unpaid" element={<FinanceRoute><UnpaidPage /></FinanceRoute>} />
+          <Route path="/finances/family-discounts" element={<FinanceRoute><FamilyDiscountsPage /></FinanceRoute>} />
 
           <Route path="/payments" element={<Navigate to="/finances/payments/history" replace />} />
           <Route path="/monthly-fees" element={<Navigate to="/finances/monthly-fees" replace />} />

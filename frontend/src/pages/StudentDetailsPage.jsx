@@ -199,6 +199,14 @@ export default function StudentDetailsPage() {
       </section>}
 
       {canViewFinance && <section className="panel">
+        <div className="panel-header"><div><h3>Charges et remises familiales</h3><p className="muted">Les remises appliquées à cet enfant sont détaillées sans modifier ses paiements.</p></div></div>
+        <div className="table-wrap"><table><thead><tr><th>Charge</th><th>Montant initial</th><th>Remise familiale</th><th>À payer</th><th>Reste</th></tr></thead><tbody>
+          {(details.charges || []).map((charge) => <tr key={charge.id}><td>{charge.label}<br/>{charge.family_discount_id && <small>{charge.family_discount_reason || "Remise familiale"}</small>}</td><td>{formatMoney(charge.original_amount, language)}</td><td>{charge.family_discount_id ? `-${formatMoney(charge.family_discount_amount, language)}` : "—"}</td><td>{formatMoney(charge.final_amount, language)}</td><td>{formatMoney(charge.remaining_amount, language)}</td></tr>)}
+          {!(details.charges || []).length && <tr><td colSpan="5" className="table-empty">Aucune charge flexible.</td></tr>}
+        </tbody></table></div>
+      </section>}
+
+      {canViewFinance && <section className="panel">
         <div className="panel-header"><div><h3>{t("studentProfile.paymentHistory")}</h3><p className="muted">{t("studentProfile.paymentHistoryHelp")}</p></div><button type="button" onClick={exportPaymentHistory} disabled={exportingPayments}>{exportingPayments ? "Export en cours…" : "Exporter l’historique PDF"}</button></div>
         <div className="table-wrap"><table><thead><tr><th>{t("payments.receiptNumber")}</th><th>{t("common.date")}</th><th>{t("payments.period")}</th><th>{t("common.amount")}</th><th>{t("payments.method")}</th><th>{t("common.actions")}</th></tr></thead><tbody>
           {financialPayments.map((payment) => { const paymentId = payment.payment_id || payment.id; return <tr key={paymentId}><td>{payment.receipt_number || `REC-${String(paymentId).padStart(6, "0")}`}</td><td>{formatDate(payment.date || payment.payment_date, language)}</td><td>{payment.source === "FLEXIBLE" ? "Frais flexibles" : (payment.period || "-")}{payment.status === "CANCELLED" ? " · Annulé" : ""}</td><td>{formatMoney(payment.amount || payment.amount_paid, language)}</td><td>{paymentMethodLabel(payment.method || payment.payment_method_label || payment.payment_method, t)}</td><td><div className="table-actions"><Link className="secondary-btn button-link" to={`/finances/payments/${paymentId}`}>{t("common.details")}</Link><button type="button" onClick={() => downloadReceipt(paymentId)} disabled={downloadingId === paymentId}>{t("payments.downloadReceipt")}</button></div></td></tr>; })}

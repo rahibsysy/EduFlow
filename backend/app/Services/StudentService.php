@@ -134,20 +134,18 @@ class StudentService
             return false;
         }
 
-        // Consolidated financial projection for the active academic year.
-        $financialData = new FinancialDataService();
-        $finance = $financialData->getStudentFinancialSummary(
-            (int) $student['school_id'],
-            $studentId
-        );
-        $financialItems = $financialData->getStudentFinancialItems(
-            (int) $student['school_id'],
-            $studentId
-        );
-        $financialPayments = $financialData->getStudentPayments(
-            (int) $student['school_id'],
-            $studentId
-        );
+        $financeStmt = $pdo->prepare('
+            SELECT
+                COALESCE(SUM(total_amount), 0) AS total_billed,
+                COALESCE(SUM(amount_paid), 0) AS total_paid,
+                COALESCE(SUM(remaining_amount), 0) AS total_remaining,
+                SUM(CASE WHEN status = "UNPAID" THEN 1 ELSE 0 END) AS unpaid_count,
+                SUM(CASE WHEN status = "PARTIAL" THEN 1 ELSE 0 END) AS partial_count
+            FROM monthly_fees
+            WHERE student_id = ? AND school_id = ?
+        ');
+        $financeStmt->execute([$studentId, (int)$student['school_id']]);
+        $finance = $financeStmt->fetch() ?: [];
 
         $feesStmt = $pdo->prepare('
             SELECT id, month_label, year_value, total_amount, amount_paid, remaining_amount, status
@@ -174,7 +172,7 @@ class StudentService
 
         $guardiansStmt = $pdo->prepare('SELECT g.id,g.full_name,g.phone_primary,g.phone_secondary,g.email,sg.relationship_type,sg.is_financial_responsible FROM student_guardians sg INNER JOIN guardians g ON g.id=sg.guardian_id AND g.school_id=sg.school_id WHERE sg.student_id=? AND sg.school_id=? ORDER BY sg.is_financial_responsible DESC,g.id');
         $guardiansStmt->execute([$studentId, (int)$student['school_id']]);
-        $chargesStmt = $pdo->prepare('SELECT fi.id,fi.paid_amount,fi.status,details.charge_category_id,details.original_amount,details.discount_type,details.discount_value,details.final_amount,details.due_date,GREATEST(0,details.final_amount-fi.paid_amount) remaining_amount,fi.label FROM student_financial_items fi INNER JOIN student_financial_item_details details ON details.student_financial_item_id=fi.id AND details.school_id=fi.school_id WHERE fi.student_id=? AND fi.school_id=? ORDER BY fi.id DESC');
+        $chargesStmt = $pdo->prepare('SELECT fi.id,fi.paid_amount,fi.status,details.charge_category_id,details.original_amount,details.discount_type,details.discount_value,details.final_amount,details.due_date,GREATEST(0,details.final_amount-fi.paid_amount) remaining_amount,fi.label,fdi.family_discount_id,fdi.applied_discount_amount AS family_discount_amount,fd.reason AS family_discount_reason FROM student_financial_items fi INNER JOIN student_financial_item_details details ON details.student_financial_item_id=fi.id AND details.school_id=fi.school_id LEFT JOIN family_discount_impacts fdi ON fdi.student_financial_item_id=fi.id AND fdi.school_id=fi.school_id AND fdi.status="APPLIED" LEFT JOIN family_discounts fd ON fd.id=fdi.family_discount_id AND fd.status="ACTIVE" WHERE fi.student_id=? AND fi.school_id=? ORDER BY fi.id DESC');
         $chargesStmt->execute([$studentId, (int)$student['school_id']]);
 
         $siblings = [];
@@ -193,6 +191,9 @@ class StudentService
             $siblings = $siblingsStmt->fetchAll();
         }
 
+        $financialProjection = (new FinancialDataService())->getStudentFinancialSummary((int)$student['school_id'], $studentId);
+        $financialPayments = (new FinancialDataService())->getStudentPayments((int)$student['school_id'], $studentId);
+
         return [
             'student' => $student,
             'parent' => [
@@ -205,14 +206,17 @@ class StudentService
             ],
             'siblings' => $siblings,
             'finance' => [
-                'total_due' => (float) $finance['total_due'],
-                'total_billed' => (float) $finance['total_due'],
-                'total_paid' => (float) $finance['total_paid'],
-                'total_remaining' => (float) $finance['total_remaining'],
-                'unpaid_count' => (int) $finance['unpaid_count'],
-                'partial_count' => (int) $finance['partial_count'],
+                'total_billed' => (float)$financialProjection['total_due'],
+                'total_initial' => (float)$financialProjection['total_initial'],
+                'total_discount' => (float)$financialProjection['total_discount'],
+                'total_due' => (float)$financialProjection['total_due'],
+                'total_paid' => (float)$financialProjection['total_paid'],
+                'total_remaining' => (float)$financialProjection['total_remaining'],
+                'total_overpaid' => (float)$financialProjection['total_overpaid'],
+                'unpaid_count' => (int)$financialProjection['monthly']['unpaid_count'] + (int)$financialProjection['flexible']['unpaid_count'],
+                'partial_count' => (int)$financialProjection['monthly']['partial_count'] + (int)$financialProjection['flexible']['partial_count'],
             ],
-            'financial_items' => $financialItems,
+            'financial_items' => $financialProjection['items'],
             'financial_payments' => $financialPayments,
             'monthly_fees' => $feesStmt->fetchAll(),
             'payments' => $paymentsStmt->fetchAll(),

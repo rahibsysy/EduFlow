@@ -81,6 +81,7 @@ export default function DashboardLayout() {
     if (path === "/finances/payments/history") return t("navigation.paymentHistory");
     if (path === "/finances/monthly-fees") return t("navigation.monthlyFees");
     if (path === "/finances/unpaid") return t("navigation.unpaid");
+    if (path === "/finances/family-discounts") return "Remises familiales";
     if (path === "/admin") return t("navigation.team");
     if (path === "/super-admin/dashboard") return t("navigation.globalOverview");
     if (path === "/super-admin/schools") return t("navigation.schools");
@@ -119,6 +120,7 @@ export default function DashboardLayout() {
                 <li><NavLink to="/super-admin/schools">{t("navigation.schools")}</NavLink></li>
                 <li><NavLink to="/admin">{t("navigation.users")}</NavLink></li>
                 <li><NavLink to="/schedules">{t("navigation.schedule")}</NavLink></li>
+                <li><NavLink to="/finances/family-discounts">Remises familiales</NavLink></li>
               </>
             ) : user?.role === "professeur" ? (
               <>
@@ -169,7 +171,9 @@ export default function DashboardLayout() {
                 {user?.role === "admin" && (
                   <NavDropdown
                     label={t("navigation.administration")}
-                    items={[{ to: "/admin", label: t("navigation.team"), end: true }]}
+                    items={[
+                      { to: "/admin", label: t("navigation.team"), end: true },
+                    ]}
                   />
                 )}
               </>
