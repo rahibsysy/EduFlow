@@ -173,6 +173,7 @@ export default function DashboardLayout() {
                     label={t("navigation.administration")}
                     items={[
                       { to: "/admin", label: t("navigation.team"), end: true },
+                      { to: "/personnel", label: "Personnel", activePrefix: "/personnel/" },
                     ]}
                   />
                 )}

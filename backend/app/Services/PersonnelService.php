@@ -12,7 +12,9 @@ use PDOException;
 
 class PersonnelService
 {
-    private const TYPES = ['TEACHER', 'ADMINISTRATIVE_STAFF'];
+    /** `TEACHER` is accepted only for records created before the PROFESSOR rename. */
+    private const TYPES = ['PROFESSOR', 'ADMINISTRATIVE_STAFF'];
+    private const LEGACY_TEACHER_TYPE = 'TEACHER';
     private const STATUSES = ['ACTIF', 'EN_CONGE', 'ARCHIVE'];
     private const CONTRACTS = ['CDI', 'CDD', 'VACATAIRE', 'STAGE', 'AUTRE'];
     private const GENDERS = ['MALE', 'FEMALE'];
@@ -38,7 +40,17 @@ class PersonnelService
         $schoolId = $this->school();
         if (!$schoolId) return [];
         $where = ['school_id = ?']; $params = [$schoolId];
-        foreach (['personnel_type', 'status', 'service_assignment'] as $field) if (!empty($filters[$field])) { $where[] = "$field = ?"; $params[] = $filters[$field]; }
+        foreach (['personnel_type', 'status', 'service_assignment'] as $field) {
+            if (empty($filters[$field])) continue;
+            if ($field === 'personnel_type' && $filters[$field] === 'PROFESSOR') {
+                // Keep professors created with the previous enum visible during migration.
+                $where[] = 'personnel_type IN (?, ?)';
+                array_push($params, 'PROFESSOR', self::LEGACY_TEACHER_TYPE);
+                continue;
+            }
+            $where[] = "$field = ?";
+            $params[] = $filters[$field];
+        }
         $search = trim((string) ($filters['search'] ?? ''));
         if ($search !== '') { $where[] = '(first_name LIKE ? OR last_name LIKE ? OR personnel_number LIKE ? OR cin LIKE ?)'; $search = '%' . $search . '%'; array_push($params, $search, $search, $search, $search); }
         $stmt = Database::connect()->prepare('SELECT * FROM personnel_profiles WHERE ' . implode(' AND ', $where) . ' ORDER BY last_name, first_name');
@@ -102,14 +114,16 @@ class PersonnelService
         $aliases = ['function_name' => 'job_function', 'employment_status' => 'status', 'department' => 'administrative_department', 'main_mission' => 'primary_mission', 'assignment' => 'service_assignment', 'birth_date' => 'date_of_birth', 'main_diploma' => 'main_degree', 'observation' => 'notes'];
         foreach ($aliases as $incoming => $stored) if ($provided !== null && array_key_exists($incoming, $provided)) $merged[$stored] = $provided[$incoming];
         $text = static fn (string $key): ?string => trim((string) ($merged[$key] ?? '')) ?: null;
-        $type = (string) ($merged['personnel_type'] ?? ''); $firstName = $text('first_name'); $lastName = $text('last_name'); $phone = $text('phone'); $jobTitle = $text('job_title') ?? $text('job_function');
+        $type = strtoupper((string) ($merged['personnel_type'] ?? ''));
+        if ($type === self::LEGACY_TEACHER_TYPE) $type = 'PROFESSOR';
+        $firstName = $text('first_name'); $lastName = $text('last_name'); $phone = $text('phone'); $jobTitle = $text('job_title') ?? $text('job_function');
         if (!$firstName || !$lastName || !$phone || !$jobTitle || !in_array($type, self::TYPES, true)) return ['error' => 'Type, nom, prénom, téléphone et poste obligatoires'];
         $email = $text('email'); if ($email && !filter_var($email, FILTER_VALIDATE_EMAIL)) return ['error' => 'Adresse e-mail invalide'];
         $cin = strtoupper((string) preg_replace('/\s+/', '', (string) ($merged['cin'] ?? '')));
         $fields = [
             'first_name' => $firstName, 'last_name' => $lastName, 'first_name_ar' => $text('first_name_ar'), 'last_name_ar' => $text('last_name_ar'), 'cin' => $cin ?: null,
             'date_of_birth' => $text('date_of_birth'), 'birth_place' => $text('birth_place'), 'gender' => $text('gender'), 'nationality' => $text('nationality'), 'address' => $text('address'), 'city' => $text('city'), 'phone' => $phone, 'email' => $email,
-            'emergency_contact_name' => $text('emergency_contact_name'), 'emergency_contact_phone' => $text('emergency_contact_phone'), 'personnel_type' => $type, 'job_title' => $jobTitle, 'job_function' => $text('job_function'), 'service_assignment' => $text('service_assignment'), 'entry_date' => $text('entry_date'), 'contract_type' => $text('contract_type'), 'main_degree' => $text('main_degree'), 'specialty' => $type === 'TEACHER' ? $text('specialty') : null, 'work_time' => $text('work_time'), 'administrative_department' => $type === 'ADMINISTRATIVE_STAFF' ? $text('administrative_department') : null, 'primary_mission' => $type === 'ADMINISTRATIVE_STAFF' ? $text('primary_mission') : null, 'notes' => $text('notes'),
+            'emergency_contact_name' => $text('emergency_contact_name'), 'emergency_contact_phone' => $text('emergency_contact_phone'), 'personnel_type' => $type, 'job_title' => $jobTitle, 'job_function' => $text('job_function'), 'service_assignment' => $text('service_assignment'), 'entry_date' => $text('entry_date'), 'contract_type' => $text('contract_type'), 'main_degree' => $text('main_degree'), 'specialty' => $type === 'PROFESSOR' ? $text('specialty') : null, 'work_time' => $text('work_time'), 'administrative_department' => $type === 'ADMINISTRATIVE_STAFF' ? $text('administrative_department') : null, 'primary_mission' => $type === 'ADMINISTRATIVE_STAFF' ? $text('primary_mission') : null, 'notes' => $text('notes'),
         ];
         foreach (['date_of_birth', 'entry_date'] as $field) if ($fields[$field] && !$this->validDate($fields[$field])) return ['error' => 'Date invalide'];
         if ($fields['gender'] && !in_array($fields['gender'], self::GENDERS, true)) return ['error' => 'Sexe invalide'];
@@ -119,7 +133,17 @@ class PersonnelService
         $subjectIds = $this->ids($provided['subject_ids'] ?? $provided['subjects'] ?? null); $classLevelIds = $this->ids($provided['class_level_ids'] ?? $provided['class_levels'] ?? null);
         if (!$creating && $provided !== null && !array_key_exists('subject_ids', $provided) && !array_key_exists('subjects', $provided)) $subjectIds = $this->currentRelationIds('personnel_subjects', 'subject_id', (int) $merged['id']);
         if (!$creating && $provided !== null && !array_key_exists('class_level_ids', $provided) && !array_key_exists('class_levels', $provided)) $classLevelIds = $this->currentRelationIds('personnel_class_levels', 'class_level_id', (int) $merged['id']);
-        if ($type === 'TEACHER') { $error = $this->validateRelations($this->school(), $subjectIds, $classLevelIds); if ($error) return ['error' => $error]; } else { $subjectIds = []; $classLevelIds = []; }
+        if ($type === 'PROFESSOR') {
+            // A personnel profile may be created before pedagogical assignments are known.
+            // When assignments are supplied, keep the previous strict integrity checks.
+            if (($subjectIds && !$classLevelIds) || (!$subjectIds && $classLevelIds)) {
+                return ['error' => 'Sélectionnez à la fois les matières et les classes, ou laissez les affectations vides.'];
+            }
+            if ($subjectIds && $classLevelIds) {
+                $error = $this->validateRelations($this->school(), $subjectIds, $classLevelIds);
+                if ($error) return ['error' => $error];
+            }
+        } else { $subjectIds = []; $classLevelIds = []; }
         return ['fields' => $fields, 'personnel_type' => $type, 'subject_ids' => $subjectIds, 'class_level_ids' => $classLevelIds];
     }
 
@@ -129,20 +153,51 @@ class PersonnelService
     private function validateRelations(int $schoolId, array $subjectIds, array $classLevelIds): ?string
     {
         $pdo = Database::connect();
-        if ($classLevelIds) { $marks = implode(',', array_fill(0, count($classLevelIds), '?')); $stmt = $pdo->prepare("SELECT COUNT(*) FROM class_levels WHERE school_id = ? AND status = 'ACTIVE' AND id IN ($marks)"); $stmt->execute([$schoolId, ...$classLevelIds]); if ((int) $stmt->fetchColumn() !== count($classLevelIds)) return 'Une classe ou un niveau ne correspond pas à votre établissement'; }
-        if ($subjectIds) { $marks = implode(',', array_fill(0, count($subjectIds), '?')); $stmt = $pdo->prepare("SELECT COUNT(*) FROM subjects WHERE status = 'ACTIVE' AND id IN ($marks)"); $stmt->execute($subjectIds); if ((int) $stmt->fetchColumn() !== count($subjectIds)) return 'Une matière sélectionnée est invalide'; $stmt = $pdo->prepare("SELECT COUNT(DISTINCT scl.subject_id) FROM subject_class_levels scl INNER JOIN class_levels cl ON cl.id = scl.class_level_id WHERE cl.school_id = ? AND scl.subject_id IN ($marks)"); $stmt->execute([$schoolId, ...$subjectIds]); if ((int) $stmt->fetchColumn() !== count($subjectIds)) return 'Une matière ne correspond pas à votre établissement'; }
+        if ($classLevelIds) {
+            $marks = implode(',', array_fill(0, count($classLevelIds), '?'));
+            $activeYear = $this->activeSchoolYear($pdo, $schoolId);
+            $yearCondition = $activeYear === null ? '' : " AND (school_year IS NULL OR REPLACE(school_year, '-', '/') = ?)";
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM class_levels WHERE school_id = ? AND status = 'ACTIVE'$yearCondition AND id IN ($marks)");
+            $parameters = [$schoolId];
+            if ($activeYear !== null) $parameters[] = $activeYear;
+            $stmt->execute([...$parameters, ...$classLevelIds]);
+            if ((int) $stmt->fetchColumn() !== count($classLevelIds)) return 'Une classe ou un niveau doit être actif, appartenir à votre établissement et à l’année scolaire active';
+        }
+        if ($subjectIds) {
+            // The frontend obtains subjects from these exact class-level mappings. Seed a
+            // newly created level before validating it, so the API and dropdown agree.
+            $subjectService = new SubjectService();
+            foreach ($classLevelIds as $classLevelId) $subjectService->ensureSubjectsForClassLevel($classLevelId);
+            $subjectMarks = implode(',', array_fill(0, count($subjectIds), '?'));
+            $levelMarks = implode(',', array_fill(0, count($classLevelIds), '?'));
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM subjects WHERE status = 'ACTIVE' AND id IN ($subjectMarks)");
+            $stmt->execute($subjectIds);
+            if ((int) $stmt->fetchColumn() !== count($subjectIds)) return 'Une matière sélectionnée est invalide';
+            $stmt = $pdo->prepare("SELECT COUNT(DISTINCT scl.subject_id) FROM subject_class_levels scl INNER JOIN class_levels cl ON cl.id = scl.class_level_id WHERE cl.school_id = ? AND cl.status = 'ACTIVE' AND scl.class_level_id IN ($levelMarks) AND scl.subject_id IN ($subjectMarks)");
+            $stmt->execute([$schoolId, ...$classLevelIds, ...$subjectIds]);
+            if ((int) $stmt->fetchColumn() !== count($subjectIds)) return 'Chaque matière doit être disponible pour au moins une des classes ou niveaux sélectionnés';
+        }
         return null;
+    }
+
+    private function activeSchoolYear(PDO $pdo, int $schoolId): ?string
+    {
+        $stmt = $pdo->prepare('SELECT COALESCE(NULLIF(ay.name, ""), NULLIF(ay.label, "")) FROM school_settings settings INNER JOIN academic_years ay ON ay.id = CAST(settings.setting_value AS UNSIGNED) AND ay.school_id = settings.school_id WHERE settings.school_id = ? AND settings.setting_key = "active_academic_year_id" AND ay.status = "ACTIVE" LIMIT 1');
+        $stmt->execute([$schoolId]);
+        $year = trim((string) $stmt->fetchColumn());
+        return $year === '' ? null : str_replace('-', '/', $year);
     }
 
     private function syncTeachingRelations(PDO $pdo, int $personnelId, int $schoolId, string $type, array $subjectIds, array $classLevelIds): void
     {
-        foreach ([['personnel_subjects', 'subject_id', $subjectIds], ['personnel_class_levels', 'class_level_id', $classLevelIds]] as [$table, $column, $ids]) { $pdo->prepare("DELETE FROM $table WHERE personnel_id = ? AND school_id = ?")->execute([$personnelId, $schoolId]); if ($type !== 'TEACHER') continue; $stmt = $pdo->prepare("INSERT INTO $table (personnel_id, school_id, $column) VALUES (?, ?, ?)"); foreach ($ids as $relationId) $stmt->execute([$personnelId, $schoolId, $relationId]); }
+        foreach ([['personnel_subjects', 'subject_id', $subjectIds], ['personnel_class_levels', 'class_level_id', $classLevelIds]] as [$table, $column, $ids]) { $pdo->prepare("DELETE FROM $table WHERE personnel_id = ? AND school_id = ?")->execute([$personnelId, $schoolId]); if ($type !== 'PROFESSOR') continue; $stmt = $pdo->prepare("INSERT INTO $table (personnel_id, school_id, $column) VALUES (?, ?, ?)"); foreach ($ids as $relationId) $stmt->execute([$personnelId, $schoolId, $relationId]); }
     }
 
     private function currentRelationIds(string $table, string $column, int $personnelId): array { $stmt = Database::connect()->prepare("SELECT $column FROM $table WHERE personnel_id = ? AND school_id = ?"); $stmt->execute([$personnelId, $this->school()]); return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN)); }
 
     private function present(array $personnel, bool $withRelations = false): array
     {
+        if (($personnel['personnel_type'] ?? null) === self::LEGACY_TEACHER_TYPE) $personnel['personnel_type'] = 'PROFESSOR';
         $personnel['function_name'] = $personnel['job_function']; $personnel['employment_status'] = $personnel['status']; $personnel['department'] = $personnel['administrative_department']; $personnel['main_mission'] = $personnel['primary_mission']; $personnel['assignment'] = $personnel['service_assignment']; $personnel['birth_date'] = $personnel['date_of_birth']; $personnel['main_diploma'] = $personnel['main_degree']; $personnel['observation'] = $personnel['notes'];
         if (!$withRelations) return $personnel;
         $id = (int) $personnel['id']; $pdo = Database::connect();

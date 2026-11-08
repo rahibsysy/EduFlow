@@ -15,6 +15,7 @@ use App\Controllers\PaymentController;
 use App\Controllers\PaymentDocumentController;
 use App\Controllers\PaymentMethodController;
 use App\Controllers\PermissionController;
+use App\Controllers\PersonnelController;
 use App\Controllers\ReceiptController;
 use App\Controllers\ReportCardController;
 use App\Controllers\SchoolController;
@@ -94,6 +95,14 @@ Router::add('POST', '/api/class-levels', [new ClassLevelController(), 'store'], 
 Router::add('GET', '/api/class-levels/{id}', [new ClassLevelController(), 'show'], [AuthMiddleware::class]);
 Router::add('PUT', '/api/class-levels/{id}', [new ClassLevelController(), 'update'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('DELETE', '/api/class-levels/{id}', [new ClassLevelController(), 'delete'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
+
+// Personnel profiles use class_levels (not the legacy school_levels table).
+Router::add('GET', '/api/personnel/next-number', [new PersonnelController(), 'nextNumber'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
+Router::add('GET', '/api/personnel', [new PersonnelController(), 'index'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
+Router::add('POST', '/api/personnel', [new PersonnelController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('personnel.manage')]);
+Router::add('GET', '/api/personnel/{id}', [new PersonnelController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
+Router::add('PUT', '/api/personnel/{id}', [new PersonnelController(), 'update'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('personnel.manage')]);
+Router::add('PATCH', '/api/personnel/{id}/status', [new PersonnelController(), 'status'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('personnel.manage')]);
 
 Router::add('GET', '/api/subjects', [new SubjectController(), 'index'], [AuthMiddleware::class]);
 Router::add('PUT', '/api/subjects/{id}/class-levels/{classLevelId}', [new SubjectController(), 'updateClassLevelHours'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);

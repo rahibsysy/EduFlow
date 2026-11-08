@@ -30,6 +30,8 @@ import PaymentCreatePage from "../pages/payments/PaymentCreatePage";
 import PaymentDetailsPage from "../pages/payments/PaymentDetailsPage";
 import PaymentsHistoryPage from "../pages/payments/PaymentsHistoryPage";
 import FamilyDiscountsPage from "../pages/FamilyDiscountsPage";
+import PersonnelPage from "../pages/PersonnelPage";
+import PersonnelFormPage from "../pages/PersonnelFormPage";
 
 const FinanceRoute = ({ children }) => (
   <RoleRoute roles={["admin", "user"]}>{children}</RoleRoute>
@@ -65,6 +67,10 @@ export default function AppRouter() {
           <Route path="/finances/monthly-fees" element={<FinanceRoute><MonthlyFeesPage /></FinanceRoute>} />
           <Route path="/finances/unpaid" element={<FinanceRoute><UnpaidPage /></FinanceRoute>} />
           <Route path="/finances/family-discounts" element={<FinanceRoute><FamilyDiscountsPage /></FinanceRoute>} />
+
+          <Route path="/personnel" element={<RoleRoute roles={["admin"]}><PersonnelPage /></RoleRoute>} />
+          <Route path="/personnel/new" element={<RoleRoute roles={["admin"]}><PersonnelFormPage /></RoleRoute>} />
+          <Route path="/personnel/:id/edit" element={<RoleRoute roles={["admin"]}><PersonnelFormPage /></RoleRoute>} />
 
           <Route path="/payments" element={<Navigate to="/finances/payments/history" replace />} />
           <Route path="/monthly-fees" element={<Navigate to="/finances/monthly-fees" replace />} />

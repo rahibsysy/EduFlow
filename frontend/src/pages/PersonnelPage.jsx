@@ -3,9 +3,9 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { getPersonnel, updatePersonnelStatus } from "../services/personnelService";
 import useAuth from "../hooks/useAuth";
 
-const typeLabel = (value) => ({ TEACHER: "Professeur", ADMINISTRATIVE_STAFF: "Staff administratif" }[value] || "-");
+const typeLabel = (value) => ({ TEACHER: "Professeur", PROFESSOR: "Professeur", ADMINISTRATIVE_STAFF: "Staff administratif" }[value] || "-");
 const statusLabel = (value) => ({ ACTIF: "Actif", EN_CONGE: "En congé", ARCHIVE: "Archivé" }[value] || value);
-const specialtyOrDepartment = (member) => member.personnel_type === "TEACHER"
+const specialtyOrDepartment = (member) => ["TEACHER", "PROFESSOR"].includes(member.personnel_type)
   ? member.specialty || "-"
   : member.department || member.administrative_department || member.service_assignment || "-";
 
@@ -56,7 +56,7 @@ export default function PersonnelPage() {
     <section className="panel">
       <form className="filters-grid" onSubmit={submitFilters}>
         <label>Rechercher<input value={filters.search} placeholder="Nom, prénom, matricule ou CIN" onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} /></label>
-        <label>Type<select value={filters.personnel_type} onChange={(event) => setFilters((current) => ({ ...current, personnel_type: event.target.value }))}><option value="">Tous</option><option value="TEACHER">Professeurs</option><option value="ADMINISTRATIVE_STAFF">Staff administratif</option></select></label>
+        <label>Type<select value={filters.personnel_type} onChange={(event) => setFilters((current) => ({ ...current, personnel_type: event.target.value }))}><option value="">Tous</option><option value="PROFESSOR">Professeurs</option><option value="ADMINISTRATIVE_STAFF">Staff administratif</option></select></label>
         <label>Statut<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Tous</option><option value="ACTIF">Actif</option><option value="EN_CONGE">En congé</option><option value="ARCHIVE">Archivé</option></select></label>
         <label>Service / affectation<input value={filters.service_assignment} onChange={(event) => setFilters((current) => ({ ...current, service_assignment: event.target.value }))} /></label>
         <div className="filter-actions"><button type="submit" disabled={loading}>Rechercher</button><button type="button" className="secondary-btn" onClick={resetFilters} disabled={loading}>Réinitialiser</button></div>
