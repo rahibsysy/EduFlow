@@ -329,6 +329,7 @@ class StudentService
         }
 
         $schoolYear = trim((string)($data['school_year'] ?? ''));
+        $massarCode = trim((string)($data['massar_code'] ?? ''));
         $dateOfBirth = $this->normalizeDate($data['date_of_birth'] ?? null);
         $gender = $this->nullable($data['gender'] ?? null);
         $className = $this->nullable($data['class_name'] ?? null);
@@ -351,14 +352,15 @@ class StudentService
         try {
             $stmt = $pdo->prepare('
                 INSERT INTO students (
-                    school_id, parent_id, first_name, last_name, date_of_birth, gender, class_level, class_name, class_level_id,
+                    school_id, parent_id, massar_code, first_name, last_name, date_of_birth, gender, class_level, class_name, class_level_id,
                     parent_name, phone, address, monthly_amount, discount_percent, school_year, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ');
             $stmt->execute([
                 $schoolId,
                 $parentId,
+                $massarCode !== '' ? $massarCode : null,
                 $firstName,
                 $lastName,
                 $dateOfBirth,

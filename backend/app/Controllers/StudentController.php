@@ -211,6 +211,18 @@ class StudentController
         Response::json($result, 201);
     }
 
+    public function previewImportClass(): void
+    {
+        if (!isset($_FILES['students_file'])) {
+            Response::json(['message' => 'Le fichier des eleves est obligatoire.'], 422);
+        }
+        $result = (new StudentImportService())->preview($_FILES['students_file'], $_POST);
+        if (isset($result['error'])) {
+            Response::json(['message' => $result['error']], 422);
+        }
+        Response::json($result);
+    }
+
     public function delete(): void
     {
         $id = (int)Request::param('id', 0);

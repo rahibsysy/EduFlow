@@ -19,152 +19,80 @@ class StudentImportService
 
     public function import(array $file, array $data): array
     {
-        [$role, $schoolId] = $this->authScope();
-
-        if ($role === 'super_admin') {
-            $schoolId = isset($data['school_id']) ? (int)$data['school_id'] : null;
+        if (!$this->confirmationProvided($data)) {
+            return ['error' => 'Confirmation explicite obligatoire avant importation.'];
         }
-
-        if (!$schoolId || $schoolId <= 0) {
-            return ['error' => 'Ecole obligatoire pour importer des eleves'];
-        }
-
-        $tmpPath = (string)($file['tmp_name'] ?? '');
-        $name = (string)($file['name'] ?? '');
-        if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
-            return ['error' => 'Fichier import invalide ou manquant.'];
-        }
-
-        $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-        if (!in_array($extension, ['csv', 'xlsx', 'xls'], true)) {
-            return ['error' => 'Format incorrect. Formats acceptes: .xlsx, .xls, .csv.'];
-        }
-
-        if ($extension === 'xls' && !class_exists(\PhpOffice\PhpSpreadsheet\IOFactory::class)) {
-            return ['error' => 'Le format .xls necessite PhpSpreadsheet. Utilisez .xlsx ou .csv.'];
-        }
-
-        try {
-            $rows = $extension === 'csv' ? $this->readCsv($tmpPath) : $this->readXlsx($tmpPath);
-        } catch (RuntimeException $e) {
-            return ['error' => $e->getMessage()];
-        }
-
-        $headerInfo = $this->findHeaderRow($rows);
-        if ($headerInfo === null) {
-            return ['error' => 'Colonnes manquantes: Nom, Prénom.'];
-        }
-
-        [$headerRowIndex, $indexes] = $headerInfo;
-        $metadata = $this->extractMetadata($rows, $headerRowIndex);
-        $studentRows = array_slice($rows, $headerRowIndex + 1);
-        if (!$studentRows) {
-            return ['error' => 'Le fichier doit contenir au moins un eleve.'];
-        }
-
-        $schoolYear = $this->normalizeSchoolYear((string)($data['school_year'] ?? ''));
-        if ($schoolYear === '') {
-            $schoolYear = $this->normalizeSchoolYear($metadata['school_year']);
-        }
-
-        $className = trim((string)($data['class_name'] ?? ''));
-        if ($className === '') {
-            $className = $metadata['class_name'];
-        }
-
-        if ($className === '') {
-            return ['error' => 'Classe introuvable dans le fichier.'];
-        }
-
-        $levelName = trim((string)($data['level_name'] ?? ''));
-        if ($levelName === '') {
-            $levelName = $metadata['level_name'];
-        }
-        $groupName = trim((string)($data['group_name'] ?? ''));
-        if ($groupName === '') {
-            $groupName = $metadata['group_name'] !== '' ? $metadata['group_name'] : $className;
-        }
-
-        $defaultAmount = round((float)($data['monthly_amount'] ?? 0), 2);
-        if ($defaultAmount < 0) {
-            return ['error' => 'La mensualite ne peut pas etre negative'];
+        $plan = $this->prepare($file, $data);
+        if (isset($plan['error'])) {
+            return $plan;
         }
 
         $pdo = Database::connect();
         $studentService = new StudentService();
-        $imported = 0;
-        $rowErrors = [];
-
+        $created = 0;
+        $ignored = $plan['report']['ignored'];
+        $errors = $plan['report']['errors'];
         $pdo->beginTransaction();
-        $classLevel = $this->resolveOrCreateClassLevel(
-            $pdo,
-            $schoolId,
-            isset($data['class_level_id']) ? (int)$data['class_level_id'] : 0,
-            $className,
-            $groupName,
-            $levelName,
-            $schoolYear
-        );
-        if (isset($classLevel['error'])) {
-            $pdo->rollBack();
-            return $classLevel;
-        }
-
-        $classLevelId = (int)$classLevel['id'];
-        foreach ($studentRows as $offset => $row) {
-            $rowNumber = $headerRowIndex + $offset + 2;
-            if ($this->isEmptyRow($row)) {
-                continue;
+        try {
+            foreach ($plan['rows'] as $row) {
+                if ($row['status'] !== 'ready') {
+                    continue;
+                }
+                $payload = $row['payload'];
+                if ($this->massarExists($pdo, $plan['school_id'], (string)$payload['massar_code'], true)) {
+                    $ignored++;
+                    continue;
+                }
+                $result = $studentService->create($payload);
+                if (isset($result['error'])) {
+                    if ($this->massarExists($pdo, $plan['school_id'], (string)$payload['massar_code'])) {
+                        $ignored++;
+                    } else {
+                        $errors[] = 'Ligne ' . $row['line'] . ': ' . $result['error'];
+                    }
+                    continue;
+                }
+                $created++;
             }
-
-            $payload = $this->rowToPayload(
-                $schoolId,
-                $classLevelId,
-                $className,
-                $schoolYear,
-                $defaultAmount,
-                $row,
-                $indexes,
-                $rowNumber
-            );
-            $validationError = $this->validatePayload($payload, $rowNumber);
-            if ($validationError !== null) {
-                $rowErrors[] = $validationError;
-                continue;
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
             }
-
-            $created = $studentService->create($payload);
-            if (isset($created['error'])) {
-                $rowErrors[] = "Ligne {$rowNumber}: " . $created['error'];
-                continue;
-            }
-
-            $imported++;
+            return ['error' => 'Import interrompu de maniere securisee.'];
         }
-
-        if ($rowErrors) {
-            $pdo->rollBack();
-            return [
-                'error' => 'Import annule. Corrigez les erreurs puis reessayez.',
-                'details' => array_slice($rowErrors, 0, 12),
-            ];
-        }
-
-        if ($imported === 0) {
-            $pdo->rollBack();
-            return ['error' => 'Aucune ligne eleve valide a importer.'];
-        }
-
-        $pdo->commit();
 
         return [
-            'message' => "Import termine avec succes: {$imported} eleve(s) importe(s) dans {$className}.",
-            'imported_count' => $imported,
-            'class_level_id' => $classLevelId,
-            'class_name' => $className,
-            'group_name' => $groupName,
-            'level_name' => $levelName,
-            'school_year' => $schoolYear,
+            'message' => "Import termine: {$created} eleve(s) cree(s).",
+            'created_count' => $created,
+            'ignored_count' => $ignored,
+            'duplicate_count' => $plan['report']['duplicates'],
+            'error_count' => count($errors),
+            'errors' => array_slice($errors, 0, 20),
+            'class_level_id' => $plan['class']['id'],
+            'class_name' => $plan['class']['name'],
+            'school_year' => $plan['school_year'],
+        ];
+    }
+
+    public function preview(array $file, array $data): array
+    {
+        $plan = $this->prepare($file, $data);
+        if (isset($plan['error'])) {
+            return $plan;
+        }
+        return [
+            'preview' => true,
+            'class_level_id' => $plan['class']['id'],
+            'class_name' => $plan['class']['name'],
+            'level_name' => $plan['class']['level_name'] ?? '',
+            'school_year' => $plan['school_year'],
+            'report' => $plan['report'],
+            'rows' => array_map(fn (array $row) => [
+                'line' => $row['line'], 'status' => $row['status'], 'reason' => $row['reason'],
+                'first_name' => $row['payload']['first_name'] ?? '', 'last_name' => $row['payload']['last_name'] ?? '',
+                'massar_code' => $row['payload']['massar_code'] ?? '',
+            ], $plan['rows']),
         ];
     }
 
@@ -193,6 +121,7 @@ class StudentImportService
 
         return [
             'school_id' => $schoolId,
+            'massar_code' => $value('massar_code', 'code_massar', 'massar'),
             'last_name' => $lastName,
             'first_name' => $value('prenom'),
             'date_of_birth' => $this->normalizeDate($value('date_de_naissance')),
@@ -207,6 +136,165 @@ class StudentImportService
             'discount_percent' => 0,
             'status' => 'ACTIVE',
         ];
+    }
+
+    /**
+     * Parse and validate an import without writing business data.  The selected
+     * class is the authority: workbook metadata never creates or changes a class.
+     */
+    private function prepare(array $file, array $data): array
+    {
+        [$role, $schoolId] = $this->authScope();
+        if ($role === 'super_admin') {
+            $schoolId = isset($data['school_id']) ? (int)$data['school_id'] : null;
+        }
+        if (!$schoolId || $schoolId <= 0) {
+            return ['error' => 'Ecole obligatoire pour importer des eleves.'];
+        }
+
+        $tmpPath = (string)($file['tmp_name'] ?? '');
+        $name = (string)($file['name'] ?? '');
+        if ($tmpPath === '' || !$this->isAcceptedUpload($tmpPath)) {
+            return ['error' => 'Fichier import invalide ou manquant.'];
+        }
+        $extension = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+        if (!in_array($extension, ['csv', 'xlsx'], true)) {
+            return ['error' => 'Format incorrect. Formats acceptes: .xlsx ou .csv.'];
+        }
+
+        $schoolYear = $this->normalizeSchoolYear((string)($data['school_year'] ?? ''));
+        $classLevelId = (int)($data['class_level_id'] ?? 0);
+        if ($schoolYear === '' || $classLevelId <= 0) {
+            return ['error' => 'Annee scolaire et classe precise obligatoires.'];
+        }
+
+        $pdo = Database::connect();
+        $class = $this->selectedClass($pdo, $schoolId, $classLevelId, $schoolYear);
+        if (isset($class['error'])) {
+            return $class;
+        }
+
+        try {
+            $rows = $extension === 'csv' ? $this->readCsv($tmpPath) : $this->readXlsx($tmpPath);
+        } catch (RuntimeException $e) {
+            return ['error' => $e->getMessage()];
+        }
+        $headerInfo = $this->findHeaderRow($rows);
+        if ($headerInfo === null) {
+            return ['error' => 'Colonnes manquantes: Nom, Prénom.'];
+        }
+        [$headerRowIndex, $indexes] = $headerInfo;
+        $studentRows = array_slice($rows, $headerRowIndex + 1);
+        if (!$studentRows) {
+            return ['error' => 'Le fichier doit contenir au moins un eleve.'];
+        }
+
+        $plannedRows = [];
+        $seenMassar = [];
+        $report = ['ready' => 0, 'ignored' => 0, 'duplicates' => 0, 'invalid' => 0, 'ambiguous' => 0, 'errors' => []];
+        foreach ($studentRows as $offset => $row) {
+            if ($this->isEmptyRow($row)) {
+                continue;
+            }
+            $line = $headerRowIndex + $offset + 2;
+            $payload = $this->rowToPayload(
+                $schoolId,
+                (int)$class['id'],
+                (string)$class['name'],
+                $schoolYear,
+                0.0,
+                $row,
+                $indexes,
+                $line
+            );
+            $reason = $this->validatePayload($payload, $line);
+            $status = 'ready';
+            $massar = trim((string)$payload['massar_code']);
+            if ($reason !== null) {
+                $status = 'invalid';
+                $report['invalid']++;
+                $report['errors'][] = $reason;
+            } elseif ($massar !== '') {
+                $key = strtolower($massar);
+                if (isset($seenMassar[$key]) || $this->massarExists($pdo, $schoolId, $massar)) {
+                    $status = 'duplicate';
+                    $reason = "Ligne {$line}: code Massar deja present.";
+                    $report['ignored']++;
+                    $report['duplicates']++;
+                }
+                $seenMassar[$key] = true;
+            } elseif ($this->potentialMatchExists($pdo, $schoolId, $payload)) {
+                $status = 'ambiguous';
+                $reason = "Ligne {$line}: correspondance potentielle sans code Massar; verification manuelle requise.";
+                $report['ambiguous']++;
+                $report['ignored']++;
+            }
+            if ($status === 'ready') {
+                $report['ready']++;
+            }
+            $plannedRows[] = compact('line', 'status', 'reason', 'payload');
+        }
+        if (!$plannedRows) {
+            return ['error' => 'Le fichier ne contient aucune ligne eleve.'];
+        }
+
+        return [
+            'school_id' => $schoolId,
+            'school_year' => $schoolYear,
+            'class' => $class,
+            'rows' => $plannedRows,
+            'report' => $report,
+        ];
+    }
+
+    private function isAcceptedUpload(string $path): bool
+    {
+        return is_uploaded_file($path)
+            || ((string)getenv('MIRANDA_FINANCE_TEST') === '1' && is_file($path));
+    }
+
+    private function confirmationProvided(array $data): bool
+    {
+        return in_array($data['confirm'] ?? null, [true, 1, '1', 'true'], true);
+    }
+
+    private function selectedClass(\PDO $pdo, int $schoolId, int $classLevelId, string $schoolYear): array
+    {
+        $stmt = $pdo->prepare('SELECT * FROM class_levels WHERE id = ? AND school_id = ? AND status = "ACTIVE" LIMIT 1');
+        $stmt->execute([$classLevelId, $schoolId]);
+        $class = $stmt->fetch();
+        if (!$class) {
+            return ['error' => 'Classe invalide pour cette ecole.'];
+        }
+        if ($this->normalizeSchoolYear((string)($class['school_year'] ?? '')) !== $schoolYear) {
+            return ['error' => 'La classe ne correspond pas a l annee scolaire selectionnee.'];
+        }
+        return $class;
+    }
+
+    private function massarExists(\PDO $pdo, int $schoolId, string $massar, bool $forUpdate = false): bool
+    {
+        if ($massar === '') {
+            return false;
+        }
+        $sql = 'SELECT id FROM students WHERE school_id = ? AND massar_code = ? LIMIT 1' . ($forUpdate ? ' FOR UPDATE' : '');
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$schoolId, $massar]);
+        return (bool)$stmt->fetchColumn();
+    }
+
+    private function potentialMatchExists(\PDO $pdo, int $schoolId, array $payload): bool
+    {
+        $sql = 'SELECT id FROM students WHERE school_id = ? AND LOWER(first_name) = LOWER(?) AND LOWER(last_name) = LOWER(?)';
+        $values = [$schoolId, (string)$payload['first_name'], (string)$payload['last_name']];
+        if (!empty($payload['date_of_birth'])) {
+            $sql .= ' AND date_of_birth = ?';
+            $values[] = $payload['date_of_birth'];
+        }
+        $sql .= ' LIMIT 1';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($values);
+        return (bool)$stmt->fetchColumn();
     }
 
     private function validatePayload(array $payload, int $rowNumber): ?string
@@ -245,7 +333,7 @@ class StudentImportService
 
         $delimiter = substr_count($firstLine, ';') > substr_count($firstLine, ',') ? ';' : ',';
         $rows = [];
-        while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+        while (($row = fgetcsv($handle, 0, $delimiter, '"', '\\')) !== false) {
             $rows[] = array_map(fn ($value) => trim((string)$value), $row);
         }
 

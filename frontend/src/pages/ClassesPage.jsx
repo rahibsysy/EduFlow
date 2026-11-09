@@ -6,7 +6,7 @@ import {
   updateClassLevel,
 } from "../services/classLevelService";
 import { getSchools } from "../services/schoolService";
-import { getStudents, importStudents } from "../services/studentService";
+import { getStudents, importStudents, previewStudentImport } from "../services/studentService";
 import { getSubjects, updateSubjectWeeklyHours } from "../services/subjectService";
 import useAuth from "../hooks/useAuth";
 import useI18n from "../hooks/useI18n";
@@ -26,11 +26,28 @@ const emptyForm = {
 
 const emptyImportForm = {
   school_id: "",
+  school_year: defaultSchoolYear,
+  level_name: "",
+  class_level_id: "",
 };
 
 const isValidImportFile = (file) => /\.(xlsx|csv)$/i.test(file?.name || "");
 
 const normalizeSchoolYear = (value) => String(value || defaultSchoolYear).replace("-", "/");
+
+const importErrorMessage = (error, fallback) => {
+  const data = error?.response?.data;
+  const message = typeof data?.message === "string" ? data.message : "";
+  const details = Array.isArray(data?.details)
+    ? data.details.filter((detail) => typeof detail === "string" && detail.trim())
+    : [];
+
+  if (!message) {
+    return fallback;
+  }
+
+  return details.length ? `${message} ${details.join(" ")}` : message;
+};
 
 const classGroupLabel = (item) => {
   const group = String(item.group_name || "").trim();
@@ -53,6 +70,7 @@ export default function ClassesPage() {
   const [importForm, setImportForm] = useState(emptyImportForm);
   const [importFile, setImportFile] = useState(null);
   const [importProgress, setImportProgress] = useState(0);
+  const [importPreview, setImportPreview] = useState(null);
   const [selectedClass, setSelectedClass] = useState(null);
   const [classStudents, setClassStudents] = useState([]);
   const [classSubjects, setClassSubjects] = useState([]);
@@ -233,6 +251,7 @@ export default function ClassesPage() {
 
   const handleImportFile = (file) => {
     setError("");
+    setImportPreview(null);
     if (!file) {
       setImportFile(null);
       return;
@@ -247,6 +266,35 @@ export default function ClassesPage() {
     setImportFile(file);
   };
 
+  const importClasses = items.filter((item) => {
+    const sameSchool = !isSuperAdmin || String(item.school_id) === String(importForm.school_id);
+    return sameSchool && normalizeSchoolYear(item.school_year) === normalizeSchoolYear(importForm.school_year);
+  });
+  const importLevels = [...new Set(importClasses.map((item) => item.level_name || item.name).filter(Boolean))];
+  const selectableImportClasses = importClasses.filter((item) => (item.level_name || item.name) === importForm.level_name);
+
+  const previewImport = async () => {
+    setError("");
+    setMessage("");
+    if (!importFile || !importForm.class_level_id || !importForm.school_year) {
+      setError("Sélectionnez l’année, le niveau, la classe et le fichier avant la prévisualisation.");
+      return;
+    }
+    try {
+      setImportLoading(true);
+      const result = await previewStudentImport({
+        ...importForm,
+        school_id: isSuperAdmin ? importForm.school_id : undefined,
+        file: importFile,
+      });
+      setImportPreview(result);
+    } catch (err) {
+      setError(importErrorMessage(err, "Prévisualisation impossible."));
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   const handleImportSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -257,14 +305,20 @@ export default function ClassesPage() {
       setError(t("classes.fileRequired"));
       return;
     }
+    if (!importPreview) {
+      setError("Prévisualisez le fichier puis confirmez l’importation.");
+      return;
+    }
 
+    let result;
     try {
       setImportLoading(true);
-      const result = await importStudents(
+      result = await importStudents(
         {
           ...importForm,
           school_id: isSuperAdmin ? importForm.school_id : undefined,
           file: importFile,
+          confirm: true,
         },
         setImportProgress
       );
@@ -275,7 +329,16 @@ export default function ClassesPage() {
         school_id: prev.school_id,
       }));
       setImportFile(null);
+      setImportPreview(null);
       setImportProgress(100);
+    } catch (err) {
+      setError(importErrorMessage(err, t("classes.importError")));
+      return;
+    } finally {
+      setImportLoading(false);
+    }
+
+    try {
       await load();
       if (result.class_level_id) {
         const importedClass = {
@@ -288,9 +351,8 @@ export default function ClassesPage() {
         await showClass(importedClass);
       }
     } catch (err) {
-      setError(t("classes.importError"));
-    } finally {
-      setImportLoading(false);
+      // L'import est terminé ; seul l'affichage des détails a échoué.
+      setError(t("classes.detailsError"));
     }
   };
 
@@ -371,6 +433,29 @@ export default function ClassesPage() {
               ))}
             </select>
           )}
+          <select
+            value={importForm.school_year}
+            onChange={(e) => setImportForm((prev) => ({ ...prev, school_year: e.target.value, level_name: "", class_level_id: "" }))}
+            required
+          >
+            {schoolYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+          </select>
+          <select
+            value={importForm.level_name}
+            onChange={(e) => setImportForm((prev) => ({ ...prev, level_name: e.target.value, class_level_id: "" }))}
+            required
+          >
+            <option value="">Sélectionnez le niveau</option>
+            {importLevels.map((level) => <option key={level} value={level}>{level}</option>)}
+          </select>
+          <select
+            value={importForm.class_level_id}
+            onChange={(e) => setImportForm((prev) => ({ ...prev, class_level_id: e.target.value }))}
+            required
+          >
+            <option value="">Sélectionnez la classe</option>
+            {selectableImportClasses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
           <div className="upload-dropzone">
             <div>
               <p className="kpi-label">{t("classes.studentFile")}</p>
@@ -388,6 +473,14 @@ export default function ClassesPage() {
             <div className="progress-wrap">
               <div className="progress-bar" style={{ width: `${importProgress}%` }} />
             </div>
+          )}
+          <button type="button" className="secondary-btn" onClick={previewImport} disabled={importLoading}>
+            Prévisualiser
+          </button>
+          {importPreview && (
+            <p className="muted">
+              Prévisualisation : {importPreview.report?.ready || 0} importable(s), {importPreview.report?.ignored || 0} ignoré(s), {importPreview.report?.invalid || 0} invalide(s). Confirmez pour écrire en base.
+            </p>
           )}
           <button type="submit" disabled={importLoading}>
             {importLoading ? t("classes.importing") : t("classes.import")}

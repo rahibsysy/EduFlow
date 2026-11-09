@@ -62,6 +62,10 @@ export const importStudents = async (payload, onProgress) => {
     formData.append("school_id", payload.school_id);
   }
 
+  if (payload.confirm) {
+    formData.append("confirm", "true");
+  }
+
   const response = await api.post("/api/students/import", formData, {
     headers: { "Content-Type": "multipart/form-data" },
     onUploadProgress: (event) => {
@@ -73,5 +77,17 @@ export const importStudents = async (payload, onProgress) => {
     },
   });
 
+  return response.data;
+};
+
+export const previewStudentImport = async (payload) => {
+  const formData = new FormData();
+  formData.append("students_file", payload.file);
+  formData.append("class_level_id", payload.class_level_id);
+  formData.append("school_year", payload.school_year);
+  if (payload.school_id) formData.append("school_id", payload.school_id);
+  const response = await api.post("/api/students/import/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
   return response.data;
 };

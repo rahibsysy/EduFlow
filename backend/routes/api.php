@@ -77,7 +77,8 @@ Router::add('DELETE', '/api/teacher-assignments/{id}', [new TeacherAssignmentCon
 
 Router::add('GET', '/api/students', [new StudentController(), 'index'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('POST', '/api/students', [new StudentController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
-Router::add('POST', '/api/students/import', [new StudentController(), 'importClass'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
+Router::add('POST', '/api/students/import/preview', [new StudentController(), 'previewImportClass'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('students.import')]);
+Router::add('POST', '/api/students/import', [new StudentController(), 'importClass'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('students.import')]);
 Router::add('GET', '/api/students/{id}', [new StudentController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('POST', '/api/students/{id}/photo', [new StudentController(), 'uploadPhoto'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user'])]);
 Router::add('PUT', '/api/students/{id}', [new StudentController(), 'update'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
