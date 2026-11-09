@@ -147,6 +147,7 @@ class FinancialDataService
         }
 
         $query = trim((string) ($filters['search'] ?? ''));
+        $classLevelId = isset($filters['class_level_id']) ? (int) $filters['class_level_id'] : 0;
         $classLevel = trim((string) ($filters['class_level'] ?? ''));
         $className = trim((string) ($filters['class_name'] ?? ''));
         $where = ['s.school_id = ?'];
@@ -155,6 +156,15 @@ class FinancialDataService
             $where[] = '(LOWER(s.first_name) LIKE ? OR LOWER(s.last_name) LIKE ? OR LOWER(CONCAT(s.first_name, " ", s.last_name)) LIKE ?)';
             $like = '%' . strtolower($query) . '%';
             array_push($params, $like, $like, $like);
+        }
+        if ($classLevelId > 0) {
+            $class = $pdo->prepare('SELECT id FROM class_levels WHERE id = ? AND school_id = ? AND status = "ACTIVE"');
+            $class->execute([$classLevelId, $schoolId]);
+            if (!$class->fetch()) {
+                throw new DomainException('Class not found for this school');
+            }
+            $where[] = 's.class_level_id = ?';
+            $params[] = $classLevelId;
         }
         if ($classLevel !== '') {
             $where[] = 'LOWER(COALESCE(cl.level_name, cl.name, s.class_level)) LIKE ?';
@@ -214,7 +224,7 @@ class FinancialDataService
             'school_id' => $schoolId,
             'school_name' => $school['name'],
             'academic_year_id' => $academicYearId,
-            'filters' => ['month_label' => $month, 'year_value' => $yearValue],
+            'filters' => ['class_level_id' => $classLevelId ?: null, 'month_label' => $month, 'year_value' => $yearValue],
             'items' => $items,
             'summary' => $summary,
         ];

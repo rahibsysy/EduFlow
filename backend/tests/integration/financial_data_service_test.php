@@ -8,6 +8,7 @@ use App\Services\DashboardService;
 use App\Services\FinancialDataService;
 use App\Services\FamilyService;
 use App\Services\PaymentDocumentService;
+use App\Services\ConsolidatedStudentDocumentService;
 use App\Services\StudentService;
 use Dotenv\Dotenv;
 
@@ -49,17 +50,21 @@ $historicYearId = (int) $pdo->lastInsertId();
 $insertYear->execute([$otherSchoolId, '2026-2027', '2026-2027', 1]);
 $otherYearId = (int) $pdo->lastInsertId();
 $pdo->prepare('INSERT INTO school_settings (school_id, setting_key, setting_value) VALUES (?, "active_academic_year_id", ?)')->execute([$schoolId, (string) $activeYearId]);
+$insertClass = $pdo->prepare('INSERT INTO class_levels (school_id, name, level_name, group_name, school_year, status) VALUES (?, ?, ?, ?, ?, "ACTIVE")');
+$insertClass->execute([$schoolId, '1AC 1', '1AC', '1', '2026/2027']); $classA = (int)$pdo->lastInsertId();
+$insertClass->execute([$schoolId, '1AC 2', '1AC', '2', '2026/2027']); $classB = (int)$pdo->lastInsertId();
+$insertClass->execute([$otherSchoolId, 'Other 1', 'Other', '1', '2026/2027']); $otherClass = (int)$pdo->lastInsertId();
 
 $pdo->prepare('INSERT INTO families (school_id, family_reference, family_name) VALUES (?, ?, ?)')->execute([$schoolId, 'FD-FAMILY-' . $suffix, 'Financial test family']);
 $familyId = (int) $pdo->lastInsertId();
-$insertStudent = $pdo->prepare('INSERT INTO students (school_id, family_id, first_name, last_name, class_level, monthly_amount, status) VALUES (?, ?, ?, ?, ?, ?, "REGISTERED")');
-$insertStudent->execute([$schoolId, $familyId, 'Both', 'Sources', 'Test', 100]);
+$insertStudent = $pdo->prepare('INSERT INTO students (school_id, family_id, first_name, last_name, class_level, class_level_id, monthly_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?, "REGISTERED")');
+$insertStudent->execute([$schoolId, $familyId, 'Both', 'Sources', 'Test', $classA, 100]);
 $bothStudentId = (int) $pdo->lastInsertId();
-$insertStudent->execute([$schoolId, $familyId, 'Monthly', 'Only', 'Test', 40]);
+$insertStudent->execute([$schoolId, $familyId, 'Monthly', 'Only', 'Test', $classB, 40]);
 $monthlyOnlyStudentId = (int) $pdo->lastInsertId();
-$insertStudent->execute([$schoolId, null, 'Flexible', 'Only', 'Test', 0]);
+$insertStudent->execute([$schoolId, null, 'Flexible', 'Only', 'Test', null, 0]);
 $flexibleOnlyStudentId = (int) $pdo->lastInsertId();
-$insertStudent->execute([$otherSchoolId, null, 'Other', 'School', 'Test', 0]);
+$insertStudent->execute([$otherSchoolId, null, 'Other', 'School', 'Test', $otherClass, 0]);
 $otherStudentId = (int) $pdo->lastInsertId();
 
 $insertMonthly = $pdo->prepare('INSERT INTO monthly_fees (school_id, student_id, month_label, year_value, total_amount, amount_paid, remaining_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
@@ -172,6 +177,10 @@ $activeSchoolUnpaid = $service->getSchoolUnpaidItems($schoolId, ['academic_year_
 expectAmount(425, $activeSchoolUnpaid['summary']['total_remaining'], 'Active-year consolidated total mismatch');
 $periodUnpaid = $service->getSchoolUnpaidItems($schoolId, ['month_label' => '01', 'year_value' => 2026]);
 expectAmount(80, $periodUnpaid['summary']['total_remaining'], 'Monthly period filter must preserve matching monthly obligations');
+$classUnpaid = $service->getSchoolUnpaidItems($schoolId, ['class_level_id' => $classA]);
+expectAmount(400, $classUnpaid['summary']['total_remaining'], 'Exact class filter must retain only the selected parallel class');
+expectFinancial(($classUnpaid['filters']['class_level_id'] ?? null) === $classA, 'Exact class filter was not reported');
+try { $service->getSchoolUnpaidItems($schoolId, ['class_level_id' => $otherClass]); throw new RuntimeException('Foreign-school class filter was allowed'); } catch (DomainException) {}
 
 $schoolDashboard = $service->getSchoolFinancialSummary($schoolId);
 expectAmount(645, $schoolDashboard['summary']['total_due'], 'Dashboard source must include monthly and flexible obligations across years');
@@ -202,6 +211,12 @@ expectAmount(550, $globalDashboard['total_unpaid'], 'Super admin dashboard schoo
 Request::set('auth_user', ['role' => 'admin', 'school_id' => $schoolId]);
 $unpaidPdf = (new PaymentDocumentService())->unpaid([]);
 expectFinancial(!isset($unpaidPdf['error']) && str_starts_with((string) ($unpaidPdf['content'] ?? ''), '%PDF'), 'Consolidated unpaid PDF was not generated.');
+$studentPdf = (new PaymentDocumentService())->student($bothStudentId, []);
+expectFinancial(!isset($studentPdf['error']) && str_starts_with((string) ($studentPdf['content'] ?? ''), '%PDF'), 'Consolidated student statement PDF was not generated.');
+$familyPdf = (new PaymentDocumentService())->family($familyId, []);
+expectFinancial(!isset($familyPdf['error']) && str_starts_with((string) ($familyPdf['content'] ?? ''), '%PDF'), 'Consolidated family statement PDF was not generated.');
+$documentPdf = (new ConsolidatedStudentDocumentService())->generate($bothStudentId);
+expectFinancial(!isset($documentPdf['error']) && str_starts_with((string) ($documentPdf['content'] ?? ''), '%PDF'), 'Student document statement PDF was not generated.');
 
 $studentDetails = (new StudentService())->getById($bothStudentId);
 expectAmount(420, $studentDetails['finance']['total_due'], 'Student card due total must match the active-year projection');

@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SCHOOL_YEAR_MONTH_OPTIONS } from "../config/schoolOptions";
 import { getConsolidatedUnpaidItems } from "../services/financialDataService";
+import { getClassLevels } from "../services/classLevelService";
 import useI18n from "../hooks/useI18n";
 import { downloadUnpaidPdf } from "../services/paymentDocumentService";
 
@@ -25,6 +26,7 @@ export default function UnpaidPage() {
   const [summary, setSummary] = useState({ total_remaining: 0, overdue: { total_remaining: 0 } });
   const [filters, setFilters] = useState({
     search: "",
+    class_level_id: "",
     class_level: "",
     class_name: "",
     month_label: "",
@@ -34,6 +36,9 @@ export default function UnpaidPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [classes, setClasses] = useState([]);
+
+  useEffect(() => { getClassLevels().then((data) => setClasses(Array.isArray(data) ? data : [])).catch(() => setClasses([])); }, []);
 
   const totalRemaining = useMemo(() => Number(summary.total_remaining || 0), [summary]);
   const totalOverdue = useMemo(() => Number(summary.overdue?.total_remaining || 0), [summary]);
@@ -46,6 +51,7 @@ export default function UnpaidPage() {
     try {
       const data = await getConsolidatedUnpaidItems({
         search: filters.search || undefined,
+        class_level_id: filters.class_level_id || undefined,
         class_level: filters.class_level || undefined,
         class_name: filters.class_name || undefined,
         month_label: filters.month_label || undefined,
@@ -65,7 +71,7 @@ export default function UnpaidPage() {
   };
 
   const resetFilters = () => {
-    setFilters({ search: "", class_level: "", class_name: "", month_label: "", year_value: "" });
+    setFilters({ search: "", class_level_id: "", class_level: "", class_name: "", month_label: "", year_value: "" });
     setItems([]);
     setSummary({ total_remaining: 0, overdue: { total_remaining: 0 } });
     setFiltersApplied(false);
@@ -81,6 +87,7 @@ export default function UnpaidPage() {
     try {
       await downloadUnpaidPdf({
         search: filters.search || undefined,
+        class_level_id: filters.class_level_id || undefined,
         class_level: filters.class_level || undefined,
         class_name: filters.class_name || undefined,
         month_label: filters.month_label || undefined,
@@ -121,6 +128,10 @@ export default function UnpaidPage() {
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
           />
+          <select value={filters.class_level_id} onChange={(e) => setFilters({ ...filters, class_level_id: e.target.value })}>
+            <option value="">Toutes les classes</option>
+            {classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
           <input
             placeholder={t("monthlyFees.filterLevel")}
             value={filters.class_level}

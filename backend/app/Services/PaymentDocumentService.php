@@ -32,16 +32,12 @@ class PaymentDocumentService
         [$schoolId, $currency] = $this->scope();
         $student = $this->studentRow($studentId, $schoolId);
         if (!$student) return ['error' => 'Élève introuvable.', 'status' => 404];
-        $period = $this->period($filters, false);
-        if (isset($period['error'])) return $period;
-        [$where, $params] = $this->feeFilters($studentId, $schoolId, $period);
-        $stmt = Database::connect()->prepare('SELECT mf.*,COALESCE((SELECT SUM(p.amount_paid) FROM payments p WHERE p.monthly_fee_id=mf.id AND p.school_id=mf.school_id AND p.status="COMPLETED"),0) payment_sum FROM monthly_fees mf ' . $where . ' ORDER BY mf.year_value,LPAD(mf.month_label,2,"0")');
-        $stmt->execute($params);
-        $fees = $stmt->fetchAll();
-        if (!$fees) return ['error' => 'Aucune donnée financière ne correspond à la période sélectionnée.', 'status' => 422];
-        $totals = $this->totals($fees);
+        $yearId = isset($filters['academic_year_id']) && (int)$filters['academic_year_id'] > 0 ? (int)$filters['academic_year_id'] : null;
+        try { $projection = (new FinancialDataService())->getStudentFinancialSummary($schoolId, $studentId, $yearId); }
+        catch (\DomainException $exception) { return ['error' => $exception->getMessage(), 'status' => 422]; }
+        if (!$projection['items']) return ['error' => 'Aucune donnée financière ne correspond à la période sélectionnée.', 'status' => 422];
         $identity = '<p><strong>Élève :</strong> ' . $this->e($student['first_name'] . ' ' . $student['last_name']) . '<br><strong>Niveau / classe :</strong> ' . $this->e(trim(($student['class_level_name'] ?? '') . ' ' . ($student['class_name'] ?? ''))) . '<br><strong>Responsable :</strong> ' . $this->e((string)($student['responsible_name'] ?? 'Non renseigné')) . '</p>';
-        return $this->pdf('Historique des paiements', $identity . $this->periodText($period), $this->feeTable($fees, $currency) . $this->totalBox($totals, $currency), 'paiements-eleve-' . $this->slug($student['last_name'] . '-' . $student['first_name']) . '-' . ($period['year'] ?? 'toute-periode') . '.pdf', $schoolId);
+        return $this->pdf('Situation financière consolidée', $identity, $this->projectionTable($projection['items'], $currency) . $this->consolidatedTotalBox($projection, $currency), 'situation-financiere-' . $this->slug($student['last_name'] . '-' . $student['first_name']) . '.pdf', $schoolId);
     }
 
     public function family(int $familyId, array $filters): array
@@ -50,19 +46,17 @@ class PaymentDocumentService
         $familyStmt = Database::connect()->prepare('SELECT f.family_name,f.family_reference,g.full_name guardian_name,g.phone_primary FROM families f LEFT JOIN guardians g ON g.id=f.primary_guardian_id AND g.school_id=f.school_id WHERE f.id=? AND f.school_id=?');
         $familyStmt->execute([$familyId, $schoolId]); $family = $familyStmt->fetch();
         if (!$family) return ['error' => 'Famille introuvable.', 'status' => 404];
-        $period = $this->period($filters, false); if (isset($period['error'])) return $period;
+        $yearId = isset($filters['academic_year_id']) && (int)$filters['academic_year_id'] > 0 ? (int)$filters['academic_year_id'] : null;
         $members = Database::connect()->prepare('SELECT id,first_name,last_name,COALESCE(class_name, class_level, "") class_name FROM students WHERE family_id=? AND school_id=? ORDER BY last_name,first_name');
         $members->execute([$familyId, $schoolId]); $members = $members->fetchAll();
         if (!$members) return ['error' => 'Cette famille ne comporte aucun élève rattaché.', 'status' => 422];
-        $content = '<p><strong>Famille :</strong> ' . $this->e($family['family_name']) . ' · ' . $this->e($family['family_reference']) . '<br><strong>Responsable :</strong> ' . $this->e((string)($family['guardian_name'] ?? 'Non renseigné')) . '</p>' . $this->periodText($period);
-        $grand = ['total' => 0.0, 'paid' => 0.0, 'remaining' => 0.0];
-        foreach ($members as $member) {
-            [$where, $params] = $this->feeFilters((int)$member['id'], $schoolId, $period);
-            $fees = Database::connect()->prepare('SELECT mf.* FROM monthly_fees mf ' . $where . ' ORDER BY mf.year_value,LPAD(mf.month_label,2,"0")'); $fees->execute($params); $fees = $fees->fetchAll();
-            $totals = $this->totals($fees); foreach ($grand as $key => $value) $grand[$key] += $totals[$key];
-            $content .= '<section class="student-section"><h3>' . $this->e($member['first_name'] . ' ' . $member['last_name']) . ' — ' . $this->e($member['class_name']) . '</h3>' . ($fees ? $this->feeTable($fees, $currency) . $this->totalBox($totals, $currency) : '<p>Aucune mensualité pour cette période.</p>') . '</section>';
+        try { $familyProjection = (new FinancialDataService())->getFamilyFinancialSummary($schoolId, $familyId, $yearId); }
+        catch (\DomainException $exception) { return ['error' => $exception->getMessage(), 'status' => 422]; }
+        $content = '<p><strong>Famille :</strong> ' . $this->e($family['family_name']) . ' · ' . $this->e($family['family_reference']) . '<br><strong>Responsable :</strong> ' . $this->e((string)($family['guardian_name'] ?? 'Non renseigné')) . '</p>';
+        foreach ($familyProjection['children'] as $child) {
+            $content .= '<section class="student-section"><h3>' . $this->e($child['name']) . ' — ' . $this->e($child['class']) . '</h3>' . $this->projectionTable($child['summary']['items'], $currency) . $this->consolidatedTotalBox($child['summary'], $currency) . '</section>';
         }
-        return $this->pdf('Récapitulatif familial', '', $content . '<h3>Total général familial</h3>' . $this->totalBox($grand, $currency), 'recapitulatif-famille-' . $this->slug($family['family_name']) . '-' . ($period['month'] ?? 'periode') . '-' . ($period['year'] ?? '') . '.pdf', $schoolId);
+        return $this->pdf('Situation financière familiale', '', $content . '<h3>Total général familial</h3>' . $this->consolidatedTotalBox($familyProjection['summary'], $currency), 'situation-familiale-' . $this->slug($family['family_name']) . '.pdf', $schoolId);
     }
 
     public function unpaid(array $filters): array
@@ -106,6 +100,19 @@ class PaymentDocumentService
             $html .= '<tr><td>' . $this->e($item['student_name']) . '</td><td>' . $this->e($type) . '</td><td>' . $this->e($item['label']) . '</td><td>' . $this->money($item['initial_amount'], $currency) . '</td><td>' . $this->money($item['discount_amount'], $currency) . '</td><td>' . $this->money($item['final_amount'], $currency) . '</td><td>' . $this->money($item['paid_amount'], $currency) . '</td><td>' . $this->money($item['remaining_amount'], $currency) . '</td><td>' . $this->e($item['due_date'] ?? '—') . '</td><td>' . $this->e($item['status']) . '</td><td>' . $this->e($late) . '</td></tr>';
         }
         return $html . '</tbody></table>';
+    }
+    private function projectionTable(array $items, string $currency): string
+    {
+        $html = '<table><thead><tr><th>Type</th><th>Libellé</th><th>Initial</th><th>Remise</th><th>Exigible</th><th>Payé</th><th>Reste</th><th>Statut</th></tr></thead><tbody>';
+        foreach ($items as $item) {
+            $type = $item['source_type'] === 'LEGACY_MONTHLY_FEE' ? 'Mensualité' : 'Frais flexible';
+            $html .= '<tr><td>' . $this->e($type) . '</td><td>' . $this->e($item['label']) . '</td><td>' . $this->money($item['initial_amount'], $currency) . '</td><td>' . $this->money($item['discount_amount'], $currency) . '</td><td>' . $this->money($item['final_amount'], $currency) . '</td><td>' . $this->money($item['paid_amount'], $currency) . '</td><td>' . $this->money($item['remaining_amount'], $currency) . '</td><td>' . $this->e($item['status']) . '</td></tr>';
+        }
+        return $html . '</tbody></table>';
+    }
+    private function consolidatedTotalBox(array $totals, string $currency): string
+    {
+        return '<p class="total">Total initial : ' . $this->money($totals['total_initial'], $currency) . ' · Remises : ' . $this->money($totals['total_discount'], $currency) . ' · Total exigible : ' . $this->money($totals['total_final'], $currency) . ' · Total payé : ' . $this->money($totals['total_paid'], $currency) . ' · Solde restant : ' . $this->money($totals['total_remaining'], $currency) . '</p>';
     }
     private function pdf(string $title, string $meta, string $body, string $filename, int $schoolId): array
     {
