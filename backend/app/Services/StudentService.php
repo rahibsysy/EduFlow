@@ -328,8 +328,16 @@ class StudentService
             $parentLastName = $parentLastName !== '' ? $parentLastName : (string)($parts[1] ?? $lastName);
         }
 
-        $schoolYear = trim((string)($data['school_year'] ?? ''));
-        $massarCode = trim((string)($data['massar_code'] ?? ''));
+        $schoolYear = trim((string)($classLevel['school_year'] ?? ''));
+        if ($schoolYear === '') {
+            $schoolYear = trim((string)($data['school_year'] ?? ''));
+        }
+        if ($schoolYear === '') {
+            return ['error' => 'Selected class must belong to a school year'];
+        }
+        // `massar_code` remains the canonical persisted identifier.  Accept the
+        // former API key during the UI transition without writing a second value.
+        $massarCode = trim((string)($data['massar_code'] ?? $data['cne'] ?? ''));
         $dateOfBirth = $this->normalizeDate($data['date_of_birth'] ?? null);
         $gender = $this->nullable($data['gender'] ?? null);
         $className = $this->nullable($data['class_name'] ?? null);
@@ -636,26 +644,44 @@ class StudentService
 
     private function syncModernProfile(PDO $pdo, int $studentId, int $schoolId, array $data, bool $creating): void
     {
-        $yearId = $this->activeAcademicYearId($pdo, $schoolId);
-        if (!$yearId) throw new \DomainException('No active academic year configured for this school');
         $student = $this->findStudent($pdo, $studentId);
-        $pdo->prepare('UPDATE students SET internal_number=?, massar_code=?, cne=?, first_name_ar=?, last_name_ar=?, uses_transport=?, academic_year_id=? WHERE id=? AND school_id=?')->execute([
+        $yearId = $this->academicYearIdForClass($pdo, $schoolId, (int)($student['class_level_id'] ?? 0));
+        $pdo->prepare('UPDATE students SET internal_number=?, massar_code=?, first_name_ar=?, last_name_ar=?, uses_transport=?, academic_year_id=? WHERE id=? AND school_id=?')->execute([
             $this->nullable($data['internal_number'] ?? $student['internal_number'] ?? null),
-            $this->nullable($data['massar_code'] ?? $student['massar_code'] ?? null),
-            $this->nullable($data['cne'] ?? $student['cne'] ?? null),
+            $this->nullable($data['massar_code'] ?? $data['cne'] ?? $student['massar_code'] ?? null),
             $this->nullable($data['first_name_ar'] ?? $student['first_name_ar'] ?? null),
             $this->nullable($data['last_name_ar'] ?? $student['last_name_ar'] ?? null),
             !empty($data['uses_transport']) ? 1 : 0,
             $yearId, $studentId, $schoolId,
         ]);
-        if (!empty($student['class_level_id'])) {
+        if ($yearId && !empty($student['class_level_id'])) {
             $pdo->prepare('INSERT INTO enrollments (school_id,academic_year_id,student_id,class_level_id,enrollment_date,status) VALUES (?,?,?,?,?,"ACTIVE") ON DUPLICATE KEY UPDATE class_level_id=VALUES(class_level_id),status="ACTIVE"')->execute([$schoolId, $yearId, $studentId, (int)$student['class_level_id'], date('Y-m-d')]);
         }
         $this->syncGuardians($pdo, $studentId, $schoolId, (array)($data['guardians'] ?? []), $data['family_id'] ?? null);
         foreach ((array)($data['charges'] ?? []) as $charge) {
             if (!empty($charge['id'])) continue;
+            if (!$yearId) throw new \DomainException('Selected class has no matching academic year for financial charges');
             $this->createModernCharge($pdo, $studentId, $schoolId, $yearId, (array)$charge);
         }
+    }
+
+    private function academicYearIdForClass(PDO $pdo, int $schoolId, int $classLevelId): ?int
+    {
+        if ($classLevelId <= 0) {
+            throw new \DomainException('Invalid class_level_id');
+        }
+
+        $class = $pdo->prepare('SELECT school_year FROM class_levels WHERE id = ? AND school_id = ? LIMIT 1');
+        $class->execute([$classLevelId, $schoolId]);
+        $schoolYear = trim((string)$class->fetchColumn());
+        if ($schoolYear === '') {
+            throw new \DomainException('Selected class must belong to a school year');
+        }
+
+        $year = $pdo->prepare('SELECT id FROM academic_years WHERE school_id = ? AND REPLACE(COALESCE(NULLIF(name, ""), label), "-", "/") = REPLACE(?, "-", "/") LIMIT 1');
+        $year->execute([$schoolId, $schoolYear]);
+        $id = (int)($year->fetchColumn() ?: 0);
+        return $id ?: null;
     }
 
     private function activeAcademicYearId(PDO $pdo, int $schoolId): ?int
@@ -750,7 +776,7 @@ class StudentService
         $classLevelId = isset($data['class_level_id']) ? (int)$data['class_level_id'] : 0;
         if ($classLevelId > 0) {
             $stmt = $pdo->prepare('
-                SELECT id, name
+                SELECT id, name, school_year
                 FROM class_levels
                 WHERE id = ? AND school_id = ?
                 LIMIT 1
@@ -760,7 +786,7 @@ class StudentService
             if (!$row) {
                 return ['error' => 'Invalid class_level_id'];
             }
-            return ['id' => (int)$row['id'], 'name' => (string)$row['name']];
+            return ['id' => (int)$row['id'], 'name' => (string)$row['name'], 'school_year' => (string)($row['school_year'] ?? '')];
         }
 
         $classLevelName = trim((string)($data['class_level'] ?? ''));
@@ -769,7 +795,7 @@ class StudentService
         }
 
         $find = $pdo->prepare('
-            SELECT id, name
+            SELECT id, name, school_year
             FROM class_levels
             WHERE school_id = ? AND name = ?
             LIMIT 1
@@ -777,7 +803,7 @@ class StudentService
         $find->execute([$schoolId, $classLevelName]);
         $existing = $find->fetch();
         if ($existing) {
-            return ['id' => (int)$existing['id'], 'name' => (string)$existing['name']];
+            return ['id' => (int)$existing['id'], 'name' => (string)$existing['name'], 'school_year' => (string)($existing['school_year'] ?? '')];
         }
 
         $insert = $pdo->prepare('
