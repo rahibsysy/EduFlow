@@ -46,6 +46,10 @@ export const importStudents = async (payload, onProgress) => {
     formData.append("class_name", payload.class_name);
   }
 
+  if (payload.level_name) {
+    formData.append("level_name", payload.level_name);
+  }
+
   if (payload.school_year) {
     formData.append("school_year", payload.school_year);
   }
@@ -85,6 +89,7 @@ export const previewStudentImport = async (payload) => {
   formData.append("students_file", payload.file);
   formData.append("class_level_id", payload.class_level_id);
   formData.append("school_year", payload.school_year);
+  if (payload.level_name) formData.append("level_name", payload.level_name);
   if (payload.school_id) formData.append("school_id", payload.school_id);
   const response = await api.post("/api/students/import/preview", formData, {
     headers: { "Content-Type": "multipart/form-data" },

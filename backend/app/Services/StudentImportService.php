@@ -121,7 +121,9 @@ class StudentImportService
 
         return [
             'school_id' => $schoolId,
-            'massar_code' => $value('massar_code', 'code_massar', 'massar'),
+            // CNE is the user-facing name of the same canonical identifier.
+            // Keep the historical Massar headings accepted for existing exports.
+            'massar_code' => $value('massar_code', 'code_massar', 'massar', 'cne'),
             'last_name' => $lastName,
             'first_name' => $value('prenom'),
             'date_of_birth' => $this->normalizeDate($value('date_de_naissance')),
@@ -423,6 +425,49 @@ class StudentImportService
         return $metadata;
     }
 
+    /**
+     * The official export puts class information in columns on each student row,
+     * while manually prepared files often put it above the header. Support both
+     * layouts so the supplied school-import CSV can be used from the Classes page.
+     */
+    private function extractColumnMetadata(array $rows, array $indexes): array
+    {
+        $metadata = [
+            'class_name' => '',
+            'level_name' => '',
+            'group_name' => '',
+            'school_year' => '',
+        ];
+
+        foreach ($rows as $row) {
+            if ($this->isEmptyRow($row)) {
+                continue;
+            }
+
+            if ($metadata['class_name'] === '') {
+                $metadata['class_name'] = $this->firstValue($row, $indexes, ['classe', 'class_name']);
+            } else {
+                $rowClassName = $this->firstValue($row, $indexes, ['classe', 'class_name']);
+                if ($rowClassName !== '' && $rowClassName !== $metadata['class_name']) {
+                    return [
+                        'error' => 'Le fichier contient plusieurs classes. Importez un fichier par classe.',
+                    ];
+                }
+            }
+            if ($metadata['group_name'] === '') {
+                $metadata['group_name'] = $this->firstValue($row, $indexes, ['groupe', 'group_name']);
+            }
+            if ($metadata['level_name'] === '') {
+                $metadata['level_name'] = $this->firstValue($row, $indexes, ['niveau', 'niveau_scolaire', 'level_name']);
+            }
+            if ($metadata['school_year'] === '') {
+                $metadata['school_year'] = $this->firstValue($row, $indexes, ['annee_scolaire', 'school_year']);
+            }
+        }
+
+        return $metadata;
+    }
+
     private function valueAfterInlineLabel(string $raw): array
     {
         $parts = preg_split('/\s*:\s*/u', $raw, 2);
@@ -601,11 +646,17 @@ class StudentImportService
             throw new RuntimeException('Le fichier Excel est invalide.');
         }
 
+        $worksheet = $this->spreadsheetChildren($xml);
+        if (!isset($worksheet->sheetData)) {
+            throw new RuntimeException('Le fichier Excel est invalide.');
+        }
+
         $rows = [];
-        foreach ($xml->sheetData->row as $rowNode) {
+        foreach ($worksheet->sheetData->row as $rowNode) {
             $row = [];
-            foreach ($rowNode->c as $cell) {
-                $cellRef = (string)$cell['r'];
+            foreach ($this->spreadsheetChildren($rowNode)->c as $cell) {
+                $attributes = $cell->attributes();
+                $cellRef = (string)$attributes['r'];
                 $columnIndex = $this->columnIndexFromReference($cellRef);
                 $row[$columnIndex] = $this->cellValue($cell, $sharedStrings);
             }
@@ -633,15 +684,16 @@ class StudentImportService
         }
 
         $strings = [];
-        foreach ($xml->si as $item) {
-            if (isset($item->t)) {
-                $strings[] = (string)$item->t;
+        foreach ($this->spreadsheetChildren($xml)->si as $item) {
+            $itemChildren = $this->spreadsheetChildren($item);
+            if ($itemChildren->t->count() > 0) {
+                $strings[] = (string)$itemChildren->t;
                 continue;
             }
 
             $text = '';
-            foreach ($item->r as $run) {
-                $text .= (string)$run->t;
+            foreach ($itemChildren->r as $run) {
+                $text .= (string)$this->spreadsheetChildren($run)->t;
             }
             $strings[] = $text;
         }
@@ -651,17 +703,27 @@ class StudentImportService
 
     private function cellValue(SimpleXMLElement $cell, array $sharedStrings): string
     {
-        $type = (string)$cell['t'];
+        $attributes = $cell->attributes();
+        $type = (string)$attributes['t'];
+        $children = $this->spreadsheetChildren($cell);
         if ($type === 's') {
-            $index = (int)$cell->v;
+            $index = (int)$children->v;
             return trim((string)($sharedStrings[$index] ?? ''));
         }
 
         if ($type === 'inlineStr') {
-            return trim((string)($cell->is->t ?? ''));
+            $inlineString = $this->spreadsheetChildren($children->is);
+            return trim((string)$inlineString->t);
         }
 
-        return trim((string)($cell->v ?? ''));
+        return trim((string)$children->v);
+    }
+
+    private function spreadsheetChildren(SimpleXMLElement $node): SimpleXMLElement
+    {
+        $namespaces = $node->getDocNamespaces(true);
+        $namespace = $namespaces[''] ?? $namespaces['x'] ?? 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+        return $node->children($namespace);
     }
 
     private function columnIndexFromReference(string $reference): int
