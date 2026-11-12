@@ -71,7 +71,7 @@ class MonthlyFeeService
                 s.parent_name,
                 s.phone,
                 s.school_year,
-                s.discount_percent,
+                s.discount_percent, s.monthly_discount_type, s.monthly_discount_value,
                 COALESCE(cl.level_name, cl.name, s.class_level) AS class_level_name,
                 COALESCE(cl.group_name, s.class_name) AS class_group_name
             FROM monthly_fees mf
@@ -96,7 +96,7 @@ class MonthlyFeeService
         $pdo = Database::connect();
 
         $studentsStmt = $pdo->prepare('
-            SELECT id, monthly_amount, discount_percent, status
+            SELECT id, monthly_amount, discount_percent, monthly_discount_type, monthly_discount_value, status
             FROM students
             WHERE school_id = ?
         ');
@@ -105,7 +105,7 @@ class MonthlyFeeService
 
         $created = 0;
         foreach ($students as $student) {
-            if (($student['status'] ?? 'ACTIVE') !== 'ACTIVE') {
+            if (!$this->isBillableStudent((string) ($student['status'] ?? 'REGISTERED'))) {
                 continue;
             }
 
@@ -115,7 +115,7 @@ class MonthlyFeeService
                 continue;
             }
 
-            $amount = $this->netAmountFromStudent((float)$student['monthly_amount'], (float)($student['discount_percent'] ?? 0));
+            $amount = $this->netAmountFromStudent((float)$student['monthly_amount'], (float)($student['discount_percent'] ?? 0), $student['monthly_discount_type'] ?? null, $student['monthly_discount_value'] ?? null);
             $insert = $pdo->prepare('
                 INSERT INTO monthly_fees (school_id, student_id, month_label, year_value, total_amount, amount_paid, remaining_amount, status)
                 VALUES (?, ?, ?, ?, ?, 0, ?, "UNPAID")
@@ -308,7 +308,7 @@ class MonthlyFeeService
         }
 
         $studentStmt = $pdo->prepare('
-            SELECT monthly_amount, discount_percent, status
+            SELECT monthly_amount, discount_percent, monthly_discount_type, monthly_discount_value, status
             FROM students
             WHERE id = ? AND school_id = ?
             LIMIT 1
@@ -319,11 +319,11 @@ class MonthlyFeeService
             return ['error' => 'Student not found for this school'];
         }
 
-        if (($student['status'] ?? 'ACTIVE') !== 'ACTIVE') {
+        if (!$this->isBillableStudent((string) ($student['status'] ?? 'REGISTERED'))) {
             return ['error' => 'Inactive student cannot receive monthly fee'];
         }
 
-        $amount = $this->netAmountFromStudent((float)$student['monthly_amount'], (float)($student['discount_percent'] ?? 0));
+        $amount = $this->netAmountFromStudent((float)$student['monthly_amount'], (float)($student['discount_percent'] ?? 0), $student['monthly_discount_type'] ?? null, $student['monthly_discount_value'] ?? null);
         $insert = $pdo->prepare('
             INSERT INTO monthly_fees (school_id, student_id, month_label, year_value, total_amount, amount_paid, remaining_amount, status)
             VALUES (?, ?, ?, ?, ?, 0, ?, "UNPAID")
@@ -349,11 +349,18 @@ class MonthlyFeeService
         return [$role, $schoolId];
     }
 
-    private function netAmountFromStudent(float $monthlyAmount, float $discountPercent): float
+    private function netAmountFromStudent(float $monthlyAmount, float $discountPercent, ?string $discountType = null, mixed $discountValue = null): float
     {
+        if (strtoupper((string) $discountType) === 'FIXED') return round(max(0.0, $monthlyAmount - max(0.0, (float) $discountValue)), 2);
+        $discountPercent = strtoupper((string) $discountType) === 'PERCENTAGE' ? (float) $discountValue : $discountPercent;
         $discountPercent = max(0.0, min(100.0, $discountPercent));
         $net = $monthlyAmount * ((100.0 - $discountPercent) / 100.0);
         return round(max(0.0, $net), 2);
+    }
+
+    private function isBillableStudent(string $status): bool
+    {
+        return in_array(strtoupper($status), ['ACTIVE', 'REGISTERED'], true);
     }
 
     public function getById(int $monthlyFeeId): array|false

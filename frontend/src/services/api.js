@@ -25,7 +25,10 @@ api.interceptors.response.use(
   (error) => {
     const status = error?.response?.status;
     const requestUrl = String(error?.config?.url || "");
-    const isLoginRequest = requestUrl.includes("/api/auth/login");
+    // The application login endpoint is /api/login.  Do not treat a failed
+    // credential submission as an expired authenticated session: LoginPage
+    // must be allowed to display its own error message.
+    const isLoginRequest = requestUrl.includes("/api/login");
 
     if (status === 401 && !isLoginRequest && !redirectingToAccount) {
       redirectingToAccount = true;

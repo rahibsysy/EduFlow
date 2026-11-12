@@ -9,6 +9,7 @@ use App\Controllers\DashboardController;
 use App\Controllers\AlertController;
 use App\Controllers\AcademicYearController;
 use App\Controllers\ClassLevelController;
+use App\Controllers\LevelFeeController;
 use App\Controllers\EnrollmentController;
 use App\Controllers\MonthlyFeeController;
 use App\Controllers\PaymentController;
@@ -94,6 +95,8 @@ Router::add('POST', '/api/students/{id}/guardians', [new FamilyController(), 'ad
 Router::add('GET', '/api/class-levels', [new ClassLevelController(), 'index'], [AuthMiddleware::class]);
 Router::add('POST', '/api/class-levels', [new ClassLevelController(), 'store'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('GET', '/api/class-levels/{id}', [new ClassLevelController(), 'show'], [AuthMiddleware::class]);
+Router::add('GET', '/api/class-levels/{id}/fees', [new LevelFeeController(), 'show'], [AuthMiddleware::class, new SchoolRoleMiddleware(['admin', 'user']), new PermissionMiddleware('finance.view')]);
+Router::add('PUT', '/api/tuition-fee-schedules', [new LevelFeeController(), 'save'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin'), new PermissionMiddleware('finance.manage')]);
 Router::add('PUT', '/api/class-levels/{id}', [new ClassLevelController(), 'update'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 Router::add('DELETE', '/api/class-levels/{id}', [new ClassLevelController(), 'delete'], [AuthMiddleware::class, new SchoolRoleMiddleware('admin')]);
 

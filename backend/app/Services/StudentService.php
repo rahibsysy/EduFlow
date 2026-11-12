@@ -315,6 +315,14 @@ class StudentService
             return $classLevel;
         }
 
+        $monthlyDiscount = $this->monthlyDiscount($data);
+        if (isset($monthlyDiscount['error'])) return $monthlyDiscount;
+        if (!empty($data['tuition_enabled'])) {
+            $tariff = $this->tuitionTariff($pdo, $schoolId, $classLevel);
+            if ($tariff === null) return ['error' => 'Tarif non configuré pour la classe et l’année scolaire sélectionnées'];
+            $monthlyAmount = $tariff;
+        }
+
         $parentName = trim((string)($data['parent_name'] ?? ''));
         if ($parentName === '') {
             $parentName = 'Parent ' . $lastName;
@@ -361,9 +369,9 @@ class StudentService
             $stmt = $pdo->prepare('
                 INSERT INTO students (
                     school_id, parent_id, massar_code, first_name, last_name, date_of_birth, gender, class_level, class_name, class_level_id,
-                    parent_name, phone, address, monthly_amount, discount_percent, school_year, status
+                    parent_name, phone, address, monthly_amount, discount_percent, monthly_discount_type, monthly_discount_value, monthly_discount_reason, monthly_discount_author_id, monthly_discount_applied_at, school_year, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ');
             $stmt->execute([
                 $schoolId,
@@ -380,7 +388,12 @@ class StudentService
                 $parentPhone,
                 $address,
                 $monthlyAmount,
-                $discountPercent,
+                $monthlyDiscount['type'] === 'PERCENTAGE' ? $monthlyDiscount['value'] : 0,
+                $monthlyDiscount['type'],
+                $monthlyDiscount['value'],
+                $monthlyDiscount['reason'],
+                $monthlyDiscount['type'] ? ((int)(Request::get('auth_user', [])['id'] ?? 0) ?: null) : null,
+                $monthlyDiscount['type'] ? date('Y-m-d H:i:s') : null,
                 $schoolYear !== '' ? $schoolYear : null,
                 $status,
             ]);
@@ -444,6 +457,14 @@ class StudentService
             return $classLevel;
         }
 
+        $monthlyDiscount = $this->monthlyDiscount($data, $student);
+        if (isset($monthlyDiscount['error'])) return $monthlyDiscount;
+        if (!empty($data['tuition_enabled'])) {
+            $tariff = $this->tuitionTariff($pdo, $schoolId, $classLevel);
+            if ($tariff === null) return ['error' => 'Tarif non configuré pour la classe et l’année scolaire sélectionnées'];
+            $monthlyAmount = $tariff;
+        }
+
         $parentName = trim((string)($data['parent_name'] ?? $student['parent_name']));
         if ($parentName === '') {
             $parentName = 'Parent ' . $lastName;
@@ -505,6 +526,11 @@ class StudentService
                 address = ?,
                 monthly_amount = ?,
                 discount_percent = ?,
+                monthly_discount_type = ?,
+                monthly_discount_value = ?,
+                monthly_discount_reason = ?,
+                monthly_discount_author_id = ?,
+                monthly_discount_applied_at = ?,
                 school_year = ?,
                 status = ?
             WHERE id = ?
@@ -522,7 +548,12 @@ class StudentService
             $parentPhone,
             $address,
             $monthlyAmount,
-            $discountPercent,
+                $monthlyDiscount['type'] === 'PERCENTAGE' ? $monthlyDiscount['value'] : 0,
+                $monthlyDiscount['type'],
+                $monthlyDiscount['value'],
+                $monthlyDiscount['reason'],
+                $monthlyDiscount['type'] ? ((int)(Request::get('auth_user', [])['id'] ?? 0) ?: null) : null,
+                $monthlyDiscount['type'] ? date('Y-m-d H:i:s') : null,
             $schoolYear !== '' ? $schoolYear : null,
             $status,
             $studentId,
@@ -738,15 +769,59 @@ class StudentService
         $categoryId = (int)($charge['charge_category_id'] ?? 0);
         $category = $pdo->prepare('SELECT id,code,label FROM charge_categories WHERE id=? AND school_id=? AND status="ACTIVE"'); $category->execute([$categoryId, $schoolId]); $category = $category->fetch();
         if (!$category) throw new \DomainException('Invalid charge category');
+        $month = isset($charge['billing_month']) && $charge['billing_month'] !== '' ? (int)$charge['billing_month'] : null;
+        $yearValue = isset($charge['year_value']) && $charge['year_value'] !== '' ? (int)$charge['year_value'] : null;
+        if ($month !== null && ($month < 1 || $month > 12)) throw new \DomainException('Invalid charge billing month');
+        $periodicity=$pdo->prepare('SELECT periodicity FROM charge_categories WHERE id=? AND school_id=?');$periodicity->execute([(int)$category['id'],$schoolId]); if($periodicity->fetchColumn()==='MONTHLY'&&$month===null) throw new \DomainException('Une période est obligatoire pour ce frais récurrent');
+        $period = $month === null ? 'INITIAL' : sprintf('%04d-%02d', $yearValue ?: 0, $month);
+        $operation = trim((string)($charge['operation_key'] ?? ''));
+        $idempotencyKey = $operation !== '' ? $operation : sprintf('student:%d:year:%d:category:%d:period:%s', $studentId, $yearId, (int)$category['id'], $period);
         $amount = round((float)($charge['original_amount'] ?? 0), 2); $type = $charge['discount_type'] ?? null; $value = round((float)($charge['discount_value'] ?? 0), 2);
         if ($amount < 0 || !in_array($type, [null, '', 'FIXED', 'PERCENTAGE'], true) || $value < 0 || ($type === 'PERCENTAGE' && $value > 100)) throw new \DomainException('Invalid charge discount');
         $discount = $type === 'PERCENTAGE' ? round($amount * $value / 100, 2) : ($type === 'FIXED' ? $value : 0);
         if ($discount > $amount) throw new \DomainException('The discount cannot exceed the charge amount');
         $final = round($amount - $discount, 2); $due = $this->normalizeDate($charge['due_date'] ?? null);
-        $pdo->prepare('INSERT INTO student_financial_items (school_id,student_id,academic_year_id,item_code,label,unit_amount,total_amount,discount_amount,paid_amount,status,created_by) VALUES (?,?,?,?,?,?,?, ?,0,"UNPAID",?)')->execute([$schoolId, $studentId, $yearId, $category['code'] . '_' . bin2hex(random_bytes(3)), $this->nullable($charge['label'] ?? null) ?: $category['label'], $amount, $final, $discount, (int)(Request::get('auth_user', [])['id'] ?? 0) ?: null]);
+        try {
+            $pdo->prepare('INSERT INTO student_financial_items (school_id,student_id,academic_year_id,item_code,idempotency_key,label,billing_month,unit_amount,total_amount,discount_amount,paid_amount,status,created_by) VALUES (?,?,?,?,?,?,?,?,?, ?,0,"UNPAID",?)')->execute([$schoolId, $studentId, $yearId, $category['code'] . '_' . bin2hex(random_bytes(3)), $idempotencyKey, $this->nullable($charge['label'] ?? null) ?: $category['label'], $month, $amount, $final, $discount, (int)(Request::get('auth_user', [])['id'] ?? 0) ?: null]);
+        } catch (\PDOException $exception) {
+            if ($exception->getCode() === '23000') return;
+            throw $exception;
+        }
         $itemId = (int)$pdo->lastInsertId();
-        $pdo->prepare('INSERT INTO student_financial_item_details (student_financial_item_id,school_id,charge_category_id,due_date,original_amount,discount_type,discount_value,final_amount,modified_by) VALUES (?,?,?,?,?,?,?,?,?)')->execute([$itemId,$schoolId,$category['id'],$due,$amount,$type ?: null,$type ? $value : null,$final,(int)(Request::get('auth_user', [])['id'] ?? 0) ?: null]);
-        $pdo->prepare('INSERT INTO student_financial_item_history (school_id,student_financial_item_id,action,after_data,changed_by) VALUES (?,?,"CREATED",?,?)')->execute([$schoolId,$itemId,json_encode(['final_amount'=>$final]),(int)(Request::get('auth_user', [])['id'] ?? 0) ?: null]);
+        $reason = $this->nullable($charge['notes'] ?? $charge['discount_reason'] ?? null);
+        if ($type && !$reason) throw new \DomainException('Discount reason is required');
+        $pdo->prepare('INSERT INTO student_financial_item_details (student_financial_item_id,school_id,charge_category_id,billing_month,year_value,due_date,original_amount,discount_type,discount_value,final_amount,notes,modified_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$itemId,$schoolId,$category['id'],$month,$yearValue,$due,$amount,$type ?: null,$type ? $value : null,$final,$reason,(int)(Request::get('auth_user', [])['id'] ?? 0) ?: null]);
+        $pdo->prepare('INSERT INTO student_financial_item_history (school_id,student_financial_item_id,action,after_data,reason,changed_by) VALUES (?,?,"CREATED",?,?,?)')->execute([$schoolId,$itemId,json_encode(['final_amount'=>$final]),$reason,(int)(Request::get('auth_user', [])['id'] ?? 0) ?: null]);
+    }
+
+    private function monthlyDiscount(array $data, ?array $existing = null): array
+    {
+        $explicit = array_key_exists('monthly_discount_type', $data)
+            || array_key_exists('monthly_discount_value', $data)
+            || array_key_exists('monthly_discount_reason', $data);
+        $type = $explicit ? strtoupper(trim((string) ($data['monthly_discount_type'] ?? ''))) : (string) ($existing['monthly_discount_type'] ?? '');
+        $value = $explicit ? round((float) ($data['monthly_discount_value'] ?? 0), 2) : (isset($existing['monthly_discount_value']) ? (float) $existing['monthly_discount_value'] : (float) ($existing['discount_percent'] ?? $data['discount_percent'] ?? 0));
+        $reason = $explicit ? trim((string) ($data['monthly_discount_reason'] ?? '')) : ($existing['monthly_discount_reason'] ?? null);
+        if ($type === '') {
+            $legacy = (float) ($data['discount_percent'] ?? $existing['discount_percent'] ?? 0);
+            if ($legacy <= 0) return ['type' => null, 'value' => null, 'reason' => null];
+            $type = 'PERCENTAGE'; $value = $legacy;
+        }
+        if (!in_array($type, ['PERCENTAGE', 'FIXED'], true) || $value < 0 || ($type === 'PERCENTAGE' && $value > 100)) return ['error' => 'Réduction de mensualité invalide'];
+        if ($explicit && $reason === '') return ['error' => 'Le motif de réduction de mensualité est obligatoire'];
+        return ['type' => $type, 'value' => $value, 'reason' => $reason ?: null];
+    }
+
+    private function tuitionTariff(PDO $pdo, int $schoolId, array $classLevel): ?float
+    {
+        $year = trim((string) ($classLevel['school_year'] ?? ''));
+        $level = trim((string) ($classLevel['level_name'] ?? ''));
+        if ($year === '' || $level === '') return null;
+        $stream = trim((string) ($classLevel['group_name'] ?? ''));
+        $stmt = $pdo->prepare('SELECT monthly_amount FROM tuition_fee_schedules WHERE school_id=? AND school_year=? AND level_name=? AND (stream=? OR stream="") ORDER BY (stream=?) DESC,id DESC LIMIT 1');
+        $stmt->execute([$schoolId, $year, $level, $stream, $stream]);
+        $amount = $stmt->fetchColumn();
+        return $amount === false ? null : round((float) $amount, 2);
     }
 
     private function authScope(): array
@@ -776,7 +851,7 @@ class StudentService
         $classLevelId = isset($data['class_level_id']) ? (int)$data['class_level_id'] : 0;
         if ($classLevelId > 0) {
             $stmt = $pdo->prepare('
-                SELECT id, name, school_year
+                SELECT id, name, school_year, COALESCE(NULLIF(level_name,""),name) AS level_name, COALESCE(group_name, "") AS group_name
                 FROM class_levels
                 WHERE id = ? AND school_id = ?
                 LIMIT 1
@@ -786,7 +861,7 @@ class StudentService
             if (!$row) {
                 return ['error' => 'Invalid class_level_id'];
             }
-            return ['id' => (int)$row['id'], 'name' => (string)$row['name'], 'school_year' => (string)($row['school_year'] ?? '')];
+            return ['id' => (int)$row['id'], 'name' => (string)$row['name'], 'school_year' => (string)($row['school_year'] ?? ''), 'level_name' => (string)$row['level_name'], 'group_name' => (string)$row['group_name']];
         }
 
         $classLevelName = trim((string)($data['class_level'] ?? ''));
@@ -795,7 +870,7 @@ class StudentService
         }
 
         $find = $pdo->prepare('
-            SELECT id, name, school_year
+            SELECT id, name, school_year, COALESCE(NULLIF(level_name,""),name) AS level_name, COALESCE(group_name, "") AS group_name
             FROM class_levels
             WHERE school_id = ? AND name = ?
             LIMIT 1
@@ -803,7 +878,7 @@ class StudentService
         $find->execute([$schoolId, $classLevelName]);
         $existing = $find->fetch();
         if ($existing) {
-            return ['id' => (int)$existing['id'], 'name' => (string)$existing['name'], 'school_year' => (string)($existing['school_year'] ?? '')];
+            return ['id' => (int)$existing['id'], 'name' => (string)$existing['name'], 'school_year' => (string)($existing['school_year'] ?? ''), 'level_name' => (string)$existing['level_name'], 'group_name' => (string)$existing['group_name']];
         }
 
         $insert = $pdo->prepare('

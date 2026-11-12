@@ -58,8 +58,16 @@ class PaymentService
             return ['error' => 'School is required to create payment'];
         }
 
+        $idempotencyKey = trim((string)($data['idempotency_key'] ?? ''));
+        if ($idempotencyKey !== '' && (strlen($idempotencyKey) > 190 || !preg_match('/^[A-Za-z0-9._:-]+$/', $idempotencyKey))) {
+            return ['error' => 'Invalid payment idempotency key'];
+        }
+        if ($idempotencyKey !== '' && ($existing = $this->paymentByIdempotencyKey($pdo, $schoolId, $idempotencyKey))) {
+            return $this->idempotentPaymentResult($existing);
+        }
+
         if (!empty($data['allocations']) && is_array($data['allocations'])) {
-            return $this->createFlexible($data, $schoolId);
+            return $this->createFlexible($data, $schoolId, $idempotencyKey);
         }
 
         $studentId = (int)($data['student_id'] ?? 0);
@@ -134,14 +142,15 @@ class PaymentService
 
             $insert = $pdo->prepare('
                 INSERT INTO payments (
-                    school_id, student_id, monthly_fee_id, amount_paid, payment_date, payment_method_id, payment_method
+                    school_id, student_id, monthly_fee_id, idempotency_key, amount_paid, payment_date, payment_method_id, payment_method
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ');
             $insert->execute([
                 $schoolId,
                 $studentId,
                 (int)$fee['id'],
+                $idempotencyKey !== '' ? $idempotencyKey : null,
                 $amountPaid,
                 $paymentDate,
                 $paymentMethod['id'],
@@ -203,6 +212,14 @@ class PaymentService
                 'monthly_fee_remaining_amount' => $updatedRemaining,
                 'message' => 'Payment created successfully',
             ];
+        } catch (\PDOException $exception) {
+            if (($startedTransaction ?? false) && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            if (($exception->errorInfo[1] ?? null) === 1062 && $idempotencyKey !== '' && ($existing = $this->paymentByIdempotencyKey($pdo, $schoolId, $idempotencyKey))) {
+                return $this->idempotentPaymentResult($existing);
+            }
+            return ['error' => 'Payment creation failed'];
         } catch (Throwable) {
             if (($startedTransaction ?? false) && $pdo->inTransaction()) {
                 $pdo->rollBack();
@@ -292,13 +309,14 @@ class PaymentService
         }
 
         $allocations = $pdo->prepare('
-            SELECT pa.id, pa.student_financial_item_id, pa.amount, pa.created_at,
-                   COALESCE(NULLIF(pa.item_label_snapshot, ""), fi.label) AS label,
+            SELECT pa.id, pa.student_financial_item_id, pa.monthly_fee_id, pa.amount, pa.created_at,
+                   COALESCE(NULLIF(pa.item_label_snapshot, ""), fi.label, CONCAT("Mensualité ", LPAD(mf.month_label, 2, "0"), "/", mf.year_value)) AS label,
                    fi.status AS item_status,
                    details.final_amount
             FROM payment_allocations pa
-            INNER JOIN student_financial_items fi ON fi.id = pa.student_financial_item_id AND fi.school_id = pa.school_id
-            INNER JOIN student_financial_item_details details ON details.student_financial_item_id = fi.id AND details.school_id = fi.school_id
+            LEFT JOIN student_financial_items fi ON fi.id = pa.student_financial_item_id AND fi.school_id = pa.school_id
+            LEFT JOIN student_financial_item_details details ON details.student_financial_item_id = fi.id AND details.school_id = fi.school_id
+            LEFT JOIN monthly_fees mf ON mf.id = pa.monthly_fee_id AND mf.school_id = pa.school_id
             WHERE pa.payment_id = ? AND pa.school_id = ?
             ORDER BY pa.id
         ');
@@ -458,7 +476,11 @@ class PaymentService
             }
 
             foreach ($payment['allocations'] as $allocation) {
-                $this->refreshFlexibleItem($pdo, (int)$payment['school_id'], (int)$allocation['student_financial_item_id'], 'PAYMENT_CANCELLED', $reason, $userId);
+                if (!empty($allocation['monthly_fee_id'])) {
+                    $this->refreshMonthlyFee($pdo, (int)$payment['school_id'], (int)$allocation['monthly_fee_id']);
+                } else {
+                    $this->refreshFlexibleItem($pdo, (int)$payment['school_id'], (int)$allocation['student_financial_item_id'], 'PAYMENT_CANCELLED', $reason, $userId);
+                }
             }
             if (empty($payment['allocations']) && !empty($before['monthly_fee_id'])) {
                 $this->refreshMonthlyFee($pdo, (int)$payment['school_id'], (int)$before['monthly_fee_id']);
@@ -488,16 +510,20 @@ class PaymentService
         if (!$row) {
             throw new \RuntimeException('Monthly fee not found');
         }
-        // Lock the payment rows before computing the canonical balance.
-        $rows = $pdo->prepare('SELECT id FROM payments WHERE monthly_fee_id = ? AND school_id = ? FOR UPDATE');
-        $rows->execute([$feeId, $schoolId]);
-        $total = $pdo->prepare('SELECT COALESCE(SUM(amount_paid), 0) FROM payments WHERE monthly_fee_id = ? AND school_id = ? AND status = "COMPLETED"');
-        $total->execute([$feeId, $schoolId]);
-        $paid = round((float)$total->fetchColumn(), 2);
+        $paid = $this->monthlyFeePaid($pdo, $schoolId, $feeId);
         $remaining = round(max(0, (float)$row['total_amount'] - $paid), 2);
         $status = $remaining <= 0 ? 'PAID' : ($paid > 0 ? 'PARTIAL' : 'UNPAID');
         $pdo->prepare('UPDATE monthly_fees SET amount_paid = ?, remaining_amount = ?, status = ? WHERE id = ? AND school_id = ?')
             ->execute([$paid, $remaining, $status, $feeId, $schoolId]);
+    }
+
+    private function monthlyFeePaid(\PDO $pdo, int $schoolId, int $feeId): float
+    {
+        $direct = $pdo->prepare('SELECT COALESCE(SUM(amount_paid), 0) FROM payments WHERE monthly_fee_id = ? AND school_id = ? AND status = "COMPLETED"');
+        $direct->execute([$feeId, $schoolId]);
+        $allocated = $pdo->prepare('SELECT COALESCE(SUM(pa.amount), 0) FROM payment_allocations pa INNER JOIN payments p ON p.id=pa.payment_id AND p.school_id=pa.school_id WHERE pa.monthly_fee_id=? AND pa.school_id=? AND p.status="COMPLETED"');
+        $allocated->execute([$feeId, $schoolId]);
+        return round((float)$direct->fetchColumn() + (float)$allocated->fetchColumn(), 2);
     }
 
     private function recordHistory(\PDO $pdo, int $paymentId, int $schoolId, string $action, array $before, array $after, string $reason, ?int $userId): void
@@ -506,7 +532,7 @@ class PaymentService
             ->execute([$paymentId, $schoolId, $action, json_encode($before), json_encode($after), $reason, $userId]);
     }
 
-    private function createFlexible(array $data, int $schoolId): array
+    private function createFlexible(array $data, int $schoolId, string $idempotencyKey = ''): array
     {
         $pdo = Database::connect();
         $studentId = (int)($data['student_id'] ?? 0);
@@ -543,22 +569,34 @@ class PaymentService
             }
             $items = [];
             foreach ($allocations as $allocation) {
-                $item = $this->lockedFlexibleItem($pdo, $schoolId, $studentId, $allocation['student_financial_item_id']);
-                if (!$item) {
+                $isMonthly = isset($allocation['monthly_fee_id']);
+                $item = $isMonthly
+                    ? $this->lockedMonthlyAllocation($pdo, $schoolId, $studentId, (int)$allocation['monthly_fee_id'])
+                    : $this->lockedFlexibleItem($pdo, $schoolId, $studentId, (int)$allocation['student_financial_item_id']);
+                if (!$item || (!$isMonthly && $item['status'] === 'EXEMPT')) {
                     throw new \DomainException('A charge does not belong to this student or school');
-                }
-                if ($item['status'] === 'EXEMPT') {
-                    throw new \DomainException('A cancelled charge cannot be paid');
                 }
                 $remaining = round((float)$item['final_amount'] - (float)$item['allocated_paid'], 2);
                 if ($remaining <= 0 || $allocation['amount'] > $remaining + 0.00001) {
+                    if ($idempotencyKey !== '' && ($existing = $this->paymentByIdempotencyKey($pdo, $schoolId, $idempotencyKey))) {
+                        if ($ownsTransaction && $pdo->inTransaction()) $pdo->rollBack();
+                        return $this->idempotentPaymentResult($existing);
+                    }
                     throw new \DomainException('An allocation exceeds the remaining charge balance');
                 }
-                $items[$allocation['student_financial_item_id']] = $item;
+                $items[$allocation['key']] = $item;
             }
 
-            $insert = $pdo->prepare('INSERT INTO payments (school_id, student_id, monthly_fee_id, amount_paid, payment_date, payment_method_id, payment_method, status) VALUES (?, ?, NULL, ?, ?, ?, ?, "COMPLETED")');
-            $insert->execute([$schoolId, $studentId, $amountPaid, $paymentDate, $paymentMethod['id'], $paymentMethod['code']]);
+            // A concurrent request can pass the first idempotency lookup and
+            // then wait on one of the obligation locks. Re-check only after
+            // all targets are locked, when the first transaction is visible.
+            if ($idempotencyKey !== '' && ($existing = $this->paymentByIdempotencyKey($pdo, $schoolId, $idempotencyKey))) {
+                if ($ownsTransaction && $pdo->inTransaction()) $pdo->rollBack();
+                return $this->idempotentPaymentResult($existing);
+            }
+
+            $insert = $pdo->prepare('INSERT INTO payments (school_id, student_id, monthly_fee_id, idempotency_key, amount_paid, payment_date, payment_method_id, payment_method, status) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, "COMPLETED")');
+            $insert->execute([$schoolId, $studentId, $idempotencyKey !== '' ? $idempotencyKey : null, $amountPaid, $paymentDate, $paymentMethod['id'], $paymentMethod['code']]);
             $paymentId = (int)$pdo->lastInsertId();
             $schoolCode = strtoupper((string)preg_replace('/[^A-Za-z0-9]+/', '-', (string)$studentRow['school_code']));
             $schoolCode = trim($schoolCode, '-') ?: 'ECOLE';
@@ -566,13 +604,17 @@ class PaymentService
             $userId = (int)(Request::get('auth_user', [])['id'] ?? 0) ?: null;
             $pdo->prepare('UPDATE payments SET receipt_number = ?, issued_by_user_id = ? WHERE id = ?')->execute([$receiptNumber, $userId, $paymentId]);
 
-            $insertAllocation = $pdo->prepare('INSERT INTO payment_allocations (school_id, payment_id, student_financial_item_id, amount, item_label_snapshot) VALUES (?, ?, ?, ?, ?)');
+            $insertAllocation = $pdo->prepare('INSERT INTO payment_allocations (school_id, payment_id, student_financial_item_id, monthly_fee_id, amount, item_label_snapshot) VALUES (?, ?, ?, ?, ?, ?)');
             foreach ($allocations as $allocation) {
-                $item = $items[$allocation['student_financial_item_id']];
-                $insertAllocation->execute([$schoolId, $paymentId, $allocation['student_financial_item_id'], $allocation['amount'], $item['label']]);
+                $item = $items[$allocation['key']];
+                $insertAllocation->execute([$schoolId, $paymentId, $allocation['student_financial_item_id'] ?? null, $allocation['monthly_fee_id'] ?? null, $allocation['amount'], $item['label']]);
             }
-            foreach (array_keys($items) as $itemId) {
-                $this->refreshFlexibleItem($pdo, $schoolId, $itemId, 'PAYMENT_ALLOCATED', null, $userId);
+            foreach ($allocations as $allocation) {
+                if (isset($allocation['monthly_fee_id'])) {
+                    $this->refreshMonthlyFee($pdo, $schoolId, (int)$allocation['monthly_fee_id']);
+                } else {
+                    $this->refreshFlexibleItem($pdo, $schoolId, (int)$allocation['student_financial_item_id'], 'PAYMENT_ALLOCATED', null, $userId);
+                }
             }
             if ($ownsTransaction) {
                 $pdo->commit();
@@ -582,6 +624,13 @@ class PaymentService
         } catch (\DomainException $exception) {
             if (($ownsTransaction ?? false) && $pdo->inTransaction()) $pdo->rollBack();
             return ['error' => $exception->getMessage()];
+        } catch (\PDOException $exception) {
+            if (($ownsTransaction ?? false) && $pdo->inTransaction()) $pdo->rollBack();
+            if (($exception->errorInfo[1] ?? null) === 1062 && $idempotencyKey !== '' && ($existing = $this->paymentByIdempotencyKey($pdo, $schoolId, $idempotencyKey))) {
+                return $this->idempotentPaymentResult($existing);
+            }
+            error_log('Flexible payment creation failed: ' . $exception->getMessage());
+            return ['error' => 'Flexible payment creation failed'];
         } catch (\Throwable $exception) {
             if (($ownsTransaction ?? false) && $pdo->inTransaction()) $pdo->rollBack();
             error_log('Flexible payment creation failed: ' . $exception->getMessage());
@@ -589,16 +638,40 @@ class PaymentService
         }
     }
 
+    private function paymentByIdempotencyKey(\PDO $pdo, int $schoolId, string $key): array|false
+    {
+        $stmt = $pdo->prepare('SELECT id, monthly_fee_id, receipt_number, amount_paid FROM payments WHERE school_id = ? AND idempotency_key = ? LIMIT 1');
+        $stmt->execute([$schoolId, $key]);
+        return $stmt->fetch() ?: false;
+    }
+
+    private function idempotentPaymentResult(array $payment): array
+    {
+        return [
+            'id' => (int)$payment['id'],
+            'monthly_fee_id' => $payment['monthly_fee_id'] === null ? null : (int)$payment['monthly_fee_id'],
+            'receipt_number' => $payment['receipt_number'],
+            'amount_paid' => (float)$payment['amount_paid'],
+            'idempotent_replay' => true,
+            'message' => 'Payment already recorded for this operation',
+        ];
+    }
+
     private function normalizeAllocations(array $allocations): array
     {
         $normalized = [];
         foreach ($allocations as $allocation) {
             $itemId = (int)($allocation['student_financial_item_id'] ?? 0);
+            $monthlyFeeId = (int)($allocation['monthly_fee_id'] ?? 0);
             $amount = round((float)($allocation['amount'] ?? 0), 2);
-            if ($itemId <= 0 || $amount <= 0 || isset($normalized[$itemId])) {
+            if (($itemId <= 0 && $monthlyFeeId <= 0) || ($itemId > 0 && $monthlyFeeId > 0) || $amount <= 0) {
                 return [];
             }
-            $normalized[$itemId] = ['student_financial_item_id' => $itemId, 'amount' => $amount];
+            $key = $itemId > 0 ? 'item:' . $itemId : 'monthly:' . $monthlyFeeId;
+            if (isset($normalized[$key])) return [];
+            $normalized[$key] = $itemId > 0
+                ? ['key' => $key, 'student_financial_item_id' => $itemId, 'amount' => $amount]
+                : ['key' => $key, 'monthly_fee_id' => $monthlyFeeId, 'amount' => $amount];
         }
         return array_values($normalized);
     }
@@ -618,6 +691,16 @@ class PaymentService
         ');
         $stmt->execute([$itemId, $studentId, $schoolId]);
         return $stmt->fetch() ?: false;
+    }
+
+    private function lockedMonthlyAllocation(\PDO $pdo, int $schoolId, int $studentId, int $feeId): array|false
+    {
+        $fee = $pdo->prepare('SELECT id,total_amount,month_label,year_value FROM monthly_fees WHERE id=? AND school_id=? AND student_id=? FOR UPDATE');
+        $fee->execute([$feeId, $schoolId, $studentId]);
+        $row = $fee->fetch();
+        if (!$row) return false;
+        $paid = $this->monthlyFeePaid($pdo, $schoolId, $feeId);
+        return ['label' => 'Mensualité ' . str_pad((string)$row['month_label'], 2, '0', STR_PAD_LEFT) . '/' . $row['year_value'], 'final_amount' => (float)$row['total_amount'], 'allocated_paid' => $paid];
     }
 
     private function refreshFlexibleItem(\PDO $pdo, int $schoolId, int $itemId, string $action, ?string $reason, ?int $userId): void

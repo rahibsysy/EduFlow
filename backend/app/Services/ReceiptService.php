@@ -94,15 +94,17 @@ class ReceiptService
         }
 
         $allocations = $pdo->prepare('
-            SELECT pa.student_financial_item_id, pa.amount,
-                   COALESCE(NULLIF(pa.item_label_snapshot, ""), fi.label) AS label,
+            SELECT pa.student_financial_item_id, pa.monthly_fee_id, pa.amount,
+                   COALESCE(NULLIF(pa.item_label_snapshot, ""), fi.label, CONCAT("Mensualité ", LPAD(mf.month_label, 2, "0"), "/", mf.year_value)) AS label,
                    pa.item_label_snapshot,
                    details.final_amount
             FROM payment_allocations pa
-            INNER JOIN student_financial_items fi
+            LEFT JOIN student_financial_items fi
                 ON fi.id = pa.student_financial_item_id AND fi.school_id = pa.school_id
-            INNER JOIN student_financial_item_details details
+            LEFT JOIN student_financial_item_details details
                 ON details.student_financial_item_id = fi.id AND details.school_id = fi.school_id
+            LEFT JOIN monthly_fees mf
+                ON mf.id = pa.monthly_fee_id AND mf.school_id = pa.school_id
             WHERE pa.payment_id = ? AND pa.school_id = ?
             ORDER BY pa.id
         ');

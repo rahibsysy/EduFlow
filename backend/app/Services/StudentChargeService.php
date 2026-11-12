@@ -101,6 +101,7 @@ class StudentChargeService
         $months = $data['months'] ?? [($data['billing_month'] ?? null)];
         $months = array_values(array_unique(array_map(static fn($m) => $m === null || $m === '' ? null : (int)$m, (array)$months)));
         if (!$months) $months=[null]; foreach ($months as $m) if ($m !== null && ($m < 1 || $m > 12)) return ['error'=>'Mois invalide'];
+        if (($category['periodicity'] ?? '') === 'MONTHLY' && in_array(null, $months, true)) return ['error'=>'Une période est obligatoire pour ce frais récurrent'];
         $base = array_key_exists('original_amount',$data) ? $this->money($data['original_amount']) : $this->money($category['default_amount'] ?? 0);
         if ($base < 0) return ['error'=>'Montant invalide'];
         $discount=$this->discount($base, isset($data['discount_type']) ? (string)$data['discount_type'] : null, $data['discount_value'] ?? null); if(isset($discount['error']))return $discount;
@@ -126,12 +127,16 @@ class StudentChargeService
         $pdo=Database::connect(); $ownsTransaction = !$pdo->inTransaction(); if ($ownsTransaction) $pdo->beginTransaction();
         try { $created=[]; $due=$data['due_date']??null; if($due && !preg_match('/^\d{4}-\d{2}-\d{2}$/',(string)$due)) throw new \InvalidArgumentException('Date d’échéance invalide');
             foreach($preview['lines'] as $line){
-                $pdo->prepare('INSERT INTO student_financial_items(school_id,student_id,academic_year_id,item_code,label,billing_month,quantity,unit_amount,total_amount,discount_amount,paid_amount,status,justification,created_by) VALUES(?,?,?,?,?,?,1,?,?,?,0,"UNPAID",?,?)')->execute([$this->school(),$line['student_id'],$preview['academic_year_id'],$preview['category']['code'],$preview['category']['label'],$line['billing_month'],$line['original_amount'],$line['final_amount'],$line['discount_amount'],$data['notes']??null,$this->user()]);
+                $period=$line['billing_month']===null?'INITIAL':sprintf('%04d-%02d',(int)($data['year_value']??0),(int)$line['billing_month']);
+                $operation=trim((string)($data['operation_key']??''));
+                $key=$operation!==''?$operation.':student:'.$line['student_id']:'manual:student:'.$line['student_id'].':year:'.(int)$preview['academic_year_id'].':category:'.(int)$preview['category']['id'].':period:'.$period;
+                try {$pdo->prepare('INSERT INTO student_financial_items(school_id,student_id,academic_year_id,item_code,idempotency_key,label,billing_month,quantity,unit_amount,total_amount,discount_amount,paid_amount,status,justification,created_by) VALUES(?,?,?,?,?,?,?,1,?,?,?,0,"UNPAID",?,?)')->execute([$this->school(),$line['student_id'],$preview['academic_year_id'],$preview['category']['code'],$key,$preview['category']['label'],$line['billing_month'],$line['original_amount'],$line['final_amount'],$line['discount_amount'],$data['notes']??null,$this->user()]);}
+                catch(\PDOException $e){if($e->getCode()==='23000'){ $existing=$pdo->prepare('SELECT id FROM student_financial_items WHERE school_id=? AND idempotency_key=? LIMIT 1');$existing->execute([$this->school(),$key]);$id=(int)$existing->fetchColumn();if($id){$created[]=$id;continue;}}throw $e;}
                 $id=(int)$pdo->lastInsertId();
                 $pdo->prepare('INSERT INTO student_financial_item_details(student_financial_item_id,school_id,charge_category_id,billing_month,year_value,due_date,original_amount,discount_type,discount_value,final_amount,notes,modified_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$id,$this->school(),$preview['category']['id'],$line['billing_month'],$data['year_value']??null,$due,$line['original_amount'],$line['discount_type'],$line['discount_value'],$line['final_amount'],$data['notes']??null,$this->user()]);
                 $this->history($pdo,$id,'CREATED',null,['final_amount'=>$line['final_amount'],'category_id'=>$preview['category']['id']],$data['notes']??null); $created[]=$id;
-            } if ($ownsTransaction) $pdo->commit(); return ['ids'=>$created,'count'=>count($created),'total'=>$preview['total']];
-        } catch(\Throwable $e){if($ownsTransaction && $pdo->inTransaction())$pdo->rollBack();return ['error'=>$e->getMessage()];}
+            } if ($ownsTransaction) $pdo->commit(); return ['ids'=>array_values(array_unique($created)),'count'=>count(array_unique($created)),'total'=>$preview['total']];
+        } catch(\Throwable $e){if($ownsTransaction && $pdo->inTransaction())$pdo->rollBack();return ['error'=>'Création de charge impossible'];}
     }
     public function create(array $data):array{return $this->bulk($data);}
     public function cancel(int $id, array $data = []): array
